@@ -6,6 +6,7 @@ from datetime import datetime,timedelta
 import json
 import yaml
 import os
+import argparse
 
 def read_iperf_log(filepath):
     with open(filepath, 'r') as f:
@@ -22,7 +23,7 @@ def read_iperf_log(filepath):
                 iperfStartTime = datetime.strptime(line.split(',')[1].strip(), "%Y-%m-%dT%H:%M:%S.%f")
                 break
             except Exception as e:
-                print(f"Failed to parse RadarStartTime %Y-%m-%dT%H:%M:%S.%f: {e}")
+                print(f"Failed to parse RadarStartTime %Y-%m-%dT%H:%M%S.%f: {e}")
                 iperfStartTime = None
             try:
                 iperfStartTime = datetime.strptime(line.split(',')[1].strip(), "%Y%m%d_%H%M%S")
@@ -119,8 +120,8 @@ def read_gnbLog_METRICS(filepath):
                 pairs = re.findall(r'(\w+)=([^\s\],]+)', line)
                 row = {k: v for k, v in pairs}
 
-                # Store the timestamp and metric type as first keys
-                ordered_row = {'time': timestamp, 'metric_type': metric_type}
+                # Set log_type as 'metric'
+                ordered_row = {'time': timestamp, 'log_type': 'metric', 'metric_type': metric_type}
                 ordered_row.update(row)
 
                 # Extract first event if present
@@ -139,12 +140,12 @@ def read_gnbLog_METRICS(filepath):
     df = pd.DataFrame(metrics)
     if 'latency_hist' in df.columns:
         df.drop(columns=['latency_hist'], inplace=True)
-    # Ensure 'time' and 'metric_type' are the first columns
+    # Ensure 'time' and 'log_type' are the first columns
     cols = df.columns.tolist()
-    for col in ['time', 'metric_type']:
+    for col in ['time', 'log_type']:
         if col in cols:
             cols.remove(col)
-    df = df[['time', 'metric_type'] + cols]
+    df = df[['time', 'log_type'] + cols]
     # Convert 'time' column to datetime if it's not already
     df['time'] = pd.to_datetime(df['time'])
 
@@ -153,7 +154,11 @@ def read_gnbLog_METRICS(filepath):
 
     # Combine consecutive Cell Scheduler Metrics & Scheduler UE Metrics, drop metric_type column
     df_merged = combine_cell_and_ue_metrics(df)
-
+    # Ensure 'time' is first column
+    if 'time' in df_merged.columns:
+        cols = df_merged.columns.tolist()
+        cols.remove('time')
+        df_merged = df_merged[['time'] + cols]
     return df_merged
 
 def read_gnbLog_ULmeasurementReport(filepath):
@@ -165,7 +170,7 @@ def read_gnbLog_ULmeasurementReport(filepath):
     while i < len(lines):
         line = lines[i]
         if "Containerized measurementReport: [" in line:
-            # Extract timestamp, c-rnti, and ue id
+            # Extract timestamp, c-rnti, and ue id from the RRC line
             timestamp = line.split()[0]
             c_rnti_match = re.search(r'c-rnti=0x([0-9a-fA-F]+)', line)
             c_rnti = c_rnti_match.group(1) if c_rnti_match else None
@@ -190,6 +195,7 @@ def read_gnbLog_ULmeasurementReport(filepath):
                         cell = entry["UL-DCCH-Message"]["message"]["c1"]["measurementReport"]["criticalExtensions"]["measurementReport"]["measResults"]["measResultServingMOList"][0]["measResultServingCell"]["measResult"]["cellResults"]["resultsSSB-Cell"]
                         reports.append({
                             "time": timestamp,
+                            "log_type": "ULMeasRept",
                             "ue_id": ue_id,
                             "c_rnti": c_rnti,
                             "dl_rsrp": cell.get("rsrp") -156,
@@ -203,8 +209,13 @@ def read_gnbLog_ULmeasurementReport(filepath):
         else:
             i += 1
     df = pd.DataFrame(reports)
-    # print(df)
-    if df.empty == False : df['time'] = pd.to_datetime(df['time'])
+    if not df.empty and 'time' in df.columns:
+        df['time'] = pd.to_datetime(df['time'])
+        cols = df.columns.tolist()
+        for col in ['time', 'log_type']:
+            if col in cols:
+                cols.remove(col)
+        df = df[['time', 'log_type'] + cols]
     return df
 
 def extract_gnb_config_block(logfile):
@@ -288,61 +299,107 @@ def prepend_iperf_to_csv(logfile, csv_path):
         f.write(iperf_csv)
         f.write(original)
 
-def process_all_log_pairs(root_dir, output_dir, overwrite=False):
-    for dirpath, dirnames, filenames in os.walk(root_dir):
-        gnb_logs = [f for f in filenames if f.endswith('_gnb.log')]
-        for gnb_log in gnb_logs:
-            base = gnb_log.replace('_gnb.log', '')
-            iperf_log = f"{base}_iperf3.log"
-            gnb_log_path = os.path.join(dirpath, gnb_log)
-            iperf_log_path = os.path.join(dirpath, iperf_log)
-            out_csv = os.path.join(output_dir, f"{base}_merged.csv")
-            if os.path.exists(iperf_log_path):
-                if os.path.exists(out_csv) and not overwrite:
-                    print(f"Skipping (already exists): {out_csv}")
-                    continue
-                print(f"Processing: {gnb_log_path} + {iperf_log_path}")
-                try:
-                    process_one_pair(gnb_log_path, iperf_log_path, out_csv)
-                except Exception as e:
-                    print(f"Exception processing {gnb_log_path} + {iperf_log_path}: {e}")
-            else:
-                print(f"Missing iperf3 log for {gnb_log_path}")
+def read_gnbLog_PHY_PUCCH(filepath):
+    """
+    Extracts PUCCH PHY blocks from gnb.log and returns a DataFrame.
+    Each block starts with a timestamped line containing '[PHY     ]' and 'PUCCH:',
+    followed by indented key=value lines.
+    The returned DataFrame always includes a 'time' column with the timestamp.
+    The second column is always 'log_type' ('PHY' or 'CSI').
+    """
+    records = []
+    with open(filepath, 'r') as f:
+        lines = f.readlines()
 
-def process_one_pair(gnbLogFileName, iperfLogFileName, out_csv):
-    gnbLog_metrics = read_gnbLog_METRICS(gnbLogFileName)
-    gnbLog_ULMeas = read_gnbLog_ULmeasurementReport(gnbLogFileName)
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if '[PHY     ]' in line and 'PUCCH:' in line:
+            # Extract timestamp
+            time_match = re.match(r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+)', line)
+            timestamp = time_match.group(1) if time_match else None
+
+            # Extract inline key=value pairs from the header line
+            pairs = dict(re.findall(r'(\w+)=([^\s]+)', line))
+
+            # Parse following indented lines for more key=value pairs
+            j = i + 1
+            while j < len(lines) and (lines[j].startswith('  ') or lines[j].strip() == ''):
+                kv_match = re.match(r'\s*(\w+)=([^\s]+)', lines[j])
+                if kv_match:
+                    k, v = kv_match.groups()
+                    pairs[k] = v
+                j += 1
+
+            # Set log_type: if any key contains 'csi', use 'CSI', else 'PHY'
+            log_type = "CSI" if any('csi' in k.lower() for k in pairs.keys()) else "PHY"
+            record = {'time': timestamp, 'log_type': log_type}
+            record.update(pairs)
+            records.append(record)
+            i = j
+        else:
+            i += 1
+
+    df = pd.DataFrame(records)
+    if not df.empty and 'time' in df.columns and 'log_type' in df.columns:
+        df['time'] = pd.to_datetime(df['time'])
+        # Ensure 'time' and 'log_type' are the first columns
+        cols = df.columns.tolist()
+        for col in ['time', 'log_type']:
+            if col in cols:
+                cols.remove(col)
+        df = df[['time', 'log_type'] + cols]
+    return df
+
+def process_one_pair(gnbLogFileName, iperfLogFileName, out_folder, prefix=None):
+    os.makedirs(out_folder, exist_ok=True)
+    if prefix:
+        out_prefix = os.path.join(out_folder, prefix)
+    else:
+        base = os.path.basename(gnbLogFileName)
+        if base.endswith('_gnb.log'):
+            base = base[:-8]
+        out_prefix = os.path.join(out_folder, base)
+    print(f"Processing gnb log: {gnbLogFileName}")
+    print(f"output prefix: {out_prefix}")
+    gnbLog_metrics_df = read_gnbLog_METRICS(gnbLogFileName)
+    gnbLog_ULMeas_df = read_gnbLog_ULmeasurementReport(gnbLogFileName)
     iperfLog = read_iperf_log(iperfLogFileName)
+    phy_pucch_df = read_gnbLog_PHY_PUCCH(gnbLogFileName) 
 
-    # Only merge with ULMeas if it's not empty
-    if gnbLog_ULMeas is not None and not gnbLog_ULMeas.empty:
-        merged1 = pd.merge_asof(
-            gnbLog_metrics.sort_values('time'),
-            gnbLog_ULMeas.sort_values('time'),
-            on='time',
-            direction='nearest',
-            tolerance=pd.Timedelta('500ms')
-        )
-    else:
-        merged1 = gnbLog_metrics
+    # Save with dynamic filenames (in output directory)
+    phy_pucch_df.to_csv(f"{out_prefix}_phy_pucch.csv", index=False)
+    gnbLog_metrics_df.to_csv(f"{out_prefix}_metrics.csv", index=False)
+    gnbLog_ULMeas_df.to_csv(f"{out_prefix}_ULMeas.csv", index=False)
+    iperfLog.to_csv(f"{out_prefix}_iperf.csv", index=False)
+    radar_config_to_csv(gnbLogFileName, f"{out_prefix}_radar_config.csv")
 
-    # Only merge with iperfLog if it's not empty
-    if iperfLog is not None and not iperfLog.empty:
-        results_df = pd.merge_asof(
-            merged1.sort_values('time'),
-            iperfLog.sort_values('time'),
-            on='time',
-            direction='nearest',
-            tolerance=pd.Timedelta('500ms')
-        )
-    else:
-        results_df = merged1
+    return None
 
-    results_df.to_csv(out_csv, index=False)
-    gnb_config_str = extract_gnb_config_block(gnbLogFileName)
-    prepend_config_to_csv(gnb_config_str, out_csv)
-    prepend_radar_to_csv(gnbLogFileName, out_csv)
-    prepend_iperf_to_csv(gnbLogFileName, out_csv)
+def radar_config_to_csv(gnb_log_path, out_csv_path):
+    """
+    Reads the last Radar_Char line from the gnb.log file and writes it as a CSV row.
+    """
+    radar_line = None
+    with open(gnb_log_path, 'r') as f:
+        for line in reversed(f.readlines()):
+            if line.startswith("Radar_Char,"):
+                radar_line = line.strip()
+                break
+    if radar_line is None:
+        print("No Radar_Char line found in log.")
+        return
+
+    # Parse the Radar_Char line into a dict
+    parts = radar_line.split(',')
+    radar_dict = {}
+    for part in parts[1:]:
+        if '=' in part:
+            k, v = part.split('=', 1)
+            radar_dict[k.strip()] = v.strip()
+    # Write to CSV
+    df = pd.DataFrame([radar_dict])
+    df.to_csv(out_csv_path, index=False)
 
 def main():
     print("Log Processing Script")
@@ -397,13 +454,84 @@ def main():
 
     return None
 
+def process_all_log_pairs(root_dir, output_dir, overwrite=False):
+    """
+    Finds all *_gnb.log and *_iperf3.log pairs in root_dir and processes them.
+    """
+    for dirpath, _, filenames in os.walk(root_dir):
+        gnb_logs = [f for f in filenames if f.endswith('_gnb.log')]
+        for gnb_log in gnb_logs:
+            base = gnb_log[:-8]  # Remove '_gnb.log'
+            iperf_log = f"{base}_iperf3.log"
+            gnb_log_path = os.path.join(dirpath, gnb_log)
+            iperf_log_path = os.path.join(dirpath, iperf_log)
+            if os.path.exists(iperf_log_path):
+                out_folder = output_dir
+                out_prefix = os.path.join(out_folder, base)
+                # Skip if already processed and not overwriting
+                if not overwrite and all(
+                    os.path.exists(f"{out_prefix}{suffix}")
+                    for suffix in [
+                        "_phy_pucch.csv",
+                        "_metrics.csv",
+                        "_ULMeas.csv",
+                        "_iperf.csv",
+                        "_radar_config.csv"
+                    ]
+                ):
+                    print(f"Skipping {base}: already processed.")
+                    continue
+                print(f"Processing pair: {gnb_log_path}, {iperf_log_path}")
+                process_one_pair(gnb_log_path, iperf_log_path, out_folder)
+            else:
+                print(f"Warning: No matching iperf3 log for {gnb_log_path}")
+
 if __name__ == "__main__":
-    root_dir = "/home/eric/scripts"  # or wherever your logs are
-    output_dir = "/home/eric/scripts/merged_results"
-    os.makedirs(output_dir, exist_ok=True)
-    # Set overwrite=True to force re-processing
-    process_all_log_pairs(root_dir, output_dir, overwrite=False)
-    # testDir = '/home/eric/scripts/logs_20250524_074549/1410_'
-    # gnbLogFileName=f'{testDir}_gnb.log'
-    # iperfLogFileName='{testDir}_iperf3.log'
-    # process_one_pair(f'{testDir}_gnb.log', f'{testDir}_iperf3.log', "/home/eric/scripts/test_results_merged.csv")
+    parser = argparse.ArgumentParser(description="Process 5G gnb logs and generate CSVs.")
+    parser.add_argument(
+        "--gnb-log", type=str, default='/tmp/gnb.log',
+        help="Path to a single gnb.log file to process (e.g., /tmp/gnb.log)"
+    )
+    parser.add_argument(
+        "--iperf-log", type=str, default='/tmp/iperf3.log',
+        help="Path to a single iperf3.log file to process (optional, for single mode)"
+    )
+    parser.add_argument(
+        "--out-dir", type=str, default="/home/eric/OTA-Radar-5G-Trials/",
+        help="Directory to save generated CSV files"
+    )
+    parser.add_argument(
+        "--batch-root", type=str, default=None,
+        help="If set, process all log pairs in this directory tree (batch mode)"
+    )
+    parser.add_argument(
+        "--batch-out", type=str, default=None,
+        help="Output directory for batch mode"
+    )
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Overwrite existing CSVs in batch mode"
+    )
+    parser.add_argument(
+        "--prefix", type=str, default=None,
+        help="Custom prefix for output CSV files (default: base name of gnb.log file)"
+    )
+    args = parser.parse_args()
+
+    print("Running LogProcessing.py")
+
+    if args.gnb_log:
+        # Single file mode
+        gnb_log = args.gnb_log
+        iperf_log = args.iperf_log if args.iperf_log else gnb_log.replace("_gnb.log", "_iperf3.log")
+        out_dir = args.out_dir
+        os.makedirs(out_dir, exist_ok=True)
+        process_one_pair(gnb_log, iperf_log, out_dir, prefix=args.prefix)
+    elif args.batch_root and args.batch_out:
+        # Batch mode
+        os.makedirs(args.batch_out, exist_ok=True)
+        process_all_log_pairs(args.batch_root, args.batch_out, overwrite=args.overwrite)
+    else:
+        print("Please specify either --gnb-log (and optionally --iperf-log and --out-dir) for single file mode, "
+              "or --batch-root and --batch-out for batch mode.")
+

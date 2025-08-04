@@ -79,6 +79,6 @@ class AndroidController:
 
 # Example usage:
 UE = AndroidController()
-UE.restart_termux_iperf3()
-# print(controller.enable_airplane_mode())
-# print(controller.disable_airplane_mode())
+# UE.restart_termux_iperf3()
+# print(UE.enable_airplane_mode())
+print(UE.disable_airplane_mode())
