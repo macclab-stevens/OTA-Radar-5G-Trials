@@ -10,7 +10,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-folder = "processed_logs_20250803-1"
+folder = "processed_logs_20250804"
 
 gain_to_dlbrate = {}
 
@@ -44,7 +44,7 @@ for fname in os.listdir(folder):
         logging.info(f"Processing radar config: {path}")
         df = pd.read_csv(path)
         if 'prf' in df.columns and 'gain' in df.columns:
-            matches = df[df['prf'] == 3000]
+            matches = df[df['prf'] == 500]
             if not matches.empty:
                 gain = matches.iloc[0]['gain']
                 metrics_fname = fname.replace("_radar_config.csv", "_metrics.csv")
@@ -75,10 +75,10 @@ for gain in sorted(gain_to_dlbrate.keys()):
 
 plt.xlabel("Gain")
 plt.ylabel("total_dl_brate")
-plt.title("DL Brate per Gain for prf=3000")
+plt.title("DL Brate per Gain for prf=500")
 plt.gca().yaxis.set_major_locator(ticker.MultipleLocator(10))  # or another interval that fits your data
 plt.tick_params(axis='y', which='major', labelsize=10)         # ensures labels are shown
 plt.grid(True, which='major', axis='y')
-plt.savefig("gainVbrate_prf3000.png")
+plt.savefig("gainVbrate_prf500.png")
 # plt.show()
 

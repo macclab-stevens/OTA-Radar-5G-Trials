@@ -18,3 +18,7 @@ Here we ran w/ the PRF locked to 3000, and the radar gain set from 30 to 100 in 
 ![System Setup](images/gainVbrate_prf3000.png)
 
 from this file we can see that at about 40 gain there begins to be an impact and after about 85 there is no more impact from increasing the gain. VERY COOL!. 
+
+### processed_logs_20250804
+gain from 30-100, stp=1. PRF = 500
+![System Setup](images/gainVbrate_prf3000.png)

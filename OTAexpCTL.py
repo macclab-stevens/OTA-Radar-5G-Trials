@@ -30,7 +30,7 @@ iperfStop = 'pkill -f iperf3'
 
 #set Default Radar Params
 radarData = {
-        "prf": 3000,  # Initial PRF value
+        "prf": 500,  # Initial PRF value
         "gain": 60,
         "cFreq": 3410.1e6,
         "PW": 100e-6,
@@ -275,7 +275,7 @@ def main():
 
     # Prepare sweep parameters
     gain_values = list(range(30, 100, 1))  # 30 to 99 inclusive
-    prf = 3000  # Fixed PRF for all runs
+    prf = 500  # Fixed PRF for all runs
     n_repeats = 3  # Number of times to repeat each gain
     total_runs = len(gain_values) * n_repeats
     run_count = 0
