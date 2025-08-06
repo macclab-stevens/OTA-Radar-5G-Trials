@@ -64,3 +64,7 @@ from this file we can see that at about 40 gain there begins to be an impact and
 ### processed_logs_20250804
 gain from 30-100, stp=1. PRF = 500
 ![System Setup](images/gainVbrate_prf500.png)
+
+### processed_logs_20250805
+prf from 5-5000, stp=5, gain=90
+![System Setup](images/prfVbrate_gain90.png)

@@ -274,16 +274,16 @@ def main():
     stop_requested = False
 
     # Prepare sweep parameters
-    gain_values = list(range(30, 100, 1))  # 30 to 99 inclusive
-    prf = 500  # Fixed PRF for all runs
-    n_repeats = 3  # Number of times to repeat each gain
-    total_runs = len(gain_values) * n_repeats
+    gain = 90 # Fixed gain for this sweep
+    prf_values = list(range(5, 5005, 5)) # 5 to 5000 inclusive
+    n_repeats = 1  # Number of times to repeat each gain
+    total_runs = len(prf_values) * n_repeats
     run_count = 0
     run_durations = []
 
     try:
         for repeat in range(n_repeats):
-            for gain in gain_values:
+            for prf in prf_values:
                 radarData.update({'gain': gain, 'prf': prf})
                 run_count += 1
 
@@ -306,8 +306,10 @@ def main():
                     print(f"\nRun {run_count}/{total_runs} | PRF: {prf}, Gain: {gain}")
                     print("Estimating time after first run...")
 
+                #Print current radar settings
                 print(f"PRF: {radarData.get('prf')}, Gain: {radarData.get('gain')}, CFreq: {radarData.get('cFreq')}, PW: {radarData.get('PW')}")
 
+                #Start the run and time it
                 start_time = time.time()
                 runLoop1(UE, radarData, cfg, set_log_dir())
                 duration = time.time() - start_time
