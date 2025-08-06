@@ -7,6 +7,7 @@ This is a repo dedicated to OTA (Over the Air) processing of 5G signals against 
 
 ## Operations
 The flow for the data can be see in the OTAexpCTL.py file. And the “runLoop1” is called from main. The flow for each run is as follows:
+```
 Turn everything off. << or assume they are.
 Start the gnb.
 Turn air plane mode off on the android phone.
@@ -24,7 +25,7 @@ Collect logs. From /tmp/gnb.
 Process logs into respective .csv files.
 Increment radar parameters.
 Run again.
- 
+``` 
 This whole thing takes about 30-40s each. And we do about 1-2k times. So about a day or 2. Some are about 800mins.
 We don’t save the /tmp/gnb.log files because each run these are about 50-100Mb and at 1-2k runs this is a lot. Last time I left them it was about 120Gb. I need a NAS I guess soon. I have an old computer tower I’ll prob get some 1TB HDDs or something soon, either that or I need a server at stevens to hold things, or at least to back things up for science.
 
@@ -56,15 +57,27 @@ We want to find where the GAIN has the most impact. TOO low, and the 5G signal w
 
 ### processed_logs_20250803-1
 Here we ran w/ the PRF locked to 3000, and the radar gain set from 30 to 100 in 1 step increments. We ran this experiment 3x . 
-
+```csv
+prf,gain,cFreq,PW,T,bw,sampRate
+3000,30,3410100000.0,0.0001,20,2000000.0,20000000.0
+```
 ![System Setup](images/gainVbrate_prf3000.png)
 
 from this file we can see that at about 40 gain there begins to be an impact and after about 85 there is no more impact from increasing the gain. VERY COOL!. 
 
 ### processed_logs_20250804
 gain from 30-100, stp=1. PRF = 500
+```csv
+prf,gain,cFreq,PW,T,bw,sampRate
+500,30,3410100000.0,0.0001,20,2000000.0,20000000.0
+```
 ![System Setup](images/gainVbrate_prf500.png)
 
 ### processed_logs_20250805
 prf from 5-5000, stp=5, gain=90
+```csv
+prf,gain,cFreq,PW,T,bw,sampRate
+5,90,3410100000.0,0.0001,20,2000000.0,20000000.0
+```
 ![System Setup](images/prfVbrate_gain90.png)
+

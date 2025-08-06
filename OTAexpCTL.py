@@ -35,7 +35,7 @@ radarData = {
         "cFreq": 3410.1e6,
         "PW": 100e-6,
         "T": 20,
-        "bw": 2e6,
+        "bw": 5e6,
         "sampRate": 20e6
     }
 
