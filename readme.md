@@ -75,6 +75,7 @@ prf,gain,cFreq,PW,T,bw,sampRate
 
 ### processed_logs_20250805
 prf from 5-5000, stp=5, gain=90
+here the radar was 5MHz wide while the 0805 prf sweep the radar was 2MHz
 ```csv
 prf,gain,cFreq,PW,T,bw,sampRate
 5,90,3410100000.0,0.0001,20,2000000.0,20000000.0
@@ -87,11 +88,19 @@ prf from 5-5000, stp=5, gain=90
 prf,gain,cFreq,PW,T,bw,sampRate
 5,90,3410100000.0,0.0001,20,5000000.0,20000000.0
 ```
-here the radar was 5MHz wide while the 0805 prf sweep the radar was 2MHz
+here the radar was 5MHz wide while the Image above (0805 prf sweep) radar was 2MHz
 ![System Setup](images/prfVbrate_gain90_5MhzBW.png)
 
 ### processed_logs_20250807_prfBlanking
+this run we put the radar at the VERY edge of the 20MHz cell. and I wanted to see what would happen if we don't limit and then limit the max PRB allocations. 
+
 ```
+prf,gain,cFreq,PW,T,bw,sampRate
+3000,80,3418100000.0,0.0001,20,2000000.0,20000000.0
+```
+
+```
+Notes on PRB size
 20Mhz = 51prB 
 30Khz * 12 * 51 = 18.36MHz
 18.36/2 = 9.18
