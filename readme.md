@@ -81,3 +81,34 @@ prf,gain,cFreq,PW,T,bw,sampRate
 ```
 ![System Setup](images/prfVbrate_gain90.png)
 
+### processed_logs_20250806 
+prf from 5-5000, stp=5, gain=90
+```csv
+prf,gain,cFreq,PW,T,bw,sampRate
+5,90,3410100000.0,0.0001,20,5000000.0,20000000.0
+```
+here the radar was 5MHz wide while the 0805 prf sweep the radar was 2MHz
+![System Setup](images/prfVbrate_gain90_5MhzBW.png)
+
+### processed_logs_20250807_prfBlanking
+```
+20Mhz = 51prB 
+30Khz * 12 * 51 = 18.36MHz
+18.36/2 = 9.18
+627340 = 3410.1 +/- (9.18)
+3400.92 - 3419.28
+
+1 PRB = 12*30KHz = 360KHz
+if radar is 2MHz centered at 3418:
+    2Mhz / 360KHz = 5.5
+    start: 1 
+    end: 51 - 5.5 = 45.5 , round to ~45
+
+min_rb_size: 1
+    max_rb_size: 51
+    start_rb: 0
+    end_rb: 51
+```
+![System Setup](/images/20250807_prbBlankingExperiment.png)
+
+

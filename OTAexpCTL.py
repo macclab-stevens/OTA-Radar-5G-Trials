@@ -30,12 +30,12 @@ iperfStop = 'pkill -f iperf3'
 
 #set Default Radar Params
 radarData = {
-        "prf": 500,  # Initial PRF value
-        "gain": 60,
-        "cFreq": 3410.1e6,
+        "prf": 3000,  # Initial PRF value
+        "gain": 80,
+        "cFreq": 3418.1e6,
         "PW": 100e-6,
         "T": 20,
-        "bw": 5e6,
+        "bw": 2e6,
         "sampRate": 20e6
     }
 
@@ -282,42 +282,43 @@ def main():
     run_durations = []
 
     try:
-        for repeat in range(n_repeats):
-            for prf in prf_values:
-                radarData.update({'gain': gain, 'prf': prf})
-                run_count += 1
+        runLoop1(UE, radarData, cfg, set_log_dir())
+        # for repeat in range(n_repeats):
+        #     for prf in prf_values:
+        #         radarData.update({'gain': gain, 'prf': prf})
+        #         run_count += 1
 
-                # Estimate time
-                if run_durations:
-                    avg_duration = sum(run_durations) / len(run_durations)
-                    runs_left = total_runs - run_count + 1
-                    est_remaining = avg_duration * runs_left
-                    est_end_time = datetime.now() + timedelta(seconds=est_remaining)
-                    hours = int(est_remaining // 3600)
-                    minutes = int((est_remaining % 3600) // 60)
-                    seconds = int(est_remaining % 60)
-                    print(f"\nRun {run_count}/{total_runs} | PRF: {prf}, Gain: {gain}")
-                    if hours > 0:
-                        print(f"Estimated time left: {hours} hr {minutes} min {seconds} sec")
-                    else:
-                        print(f"Estimated time left: {minutes} min {seconds} sec")
-                    print(f"Estimated end time: {est_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                else:
-                    print(f"\nRun {run_count}/{total_runs} | PRF: {prf}, Gain: {gain}")
-                    print("Estimating time after first run...")
+        #         # Estimate time
+        #         if run_durations:
+        #             avg_duration = sum(run_durations) / len(run_durations)
+        #             runs_left = total_runs - run_count + 1
+        #             est_remaining = avg_duration * runs_left
+        #             est_end_time = datetime.now() + timedelta(seconds=est_remaining)
+        #             hours = int(est_remaining // 3600)
+        #             minutes = int((est_remaining % 3600) // 60)
+        #             seconds = int(est_remaining % 60)
+        #             print(f"\nRun {run_count}/{total_runs} | PRF: {prf}, Gain: {gain}")
+        #             if hours > 0:
+        #                 print(f"Estimated time left: {hours} hr {minutes} min {seconds} sec")
+        #             else:
+        #                 print(f"Estimated time left: {minutes} min {seconds} sec")
+        #             print(f"Estimated end time: {est_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        #         else:
+        #             print(f"\nRun {run_count}/{total_runs} | PRF: {prf}, Gain: {gain}")
+        #             print("Estimating time after first run...")
 
-                #Print current radar settings
-                print(f"PRF: {radarData.get('prf')}, Gain: {radarData.get('gain')}, CFreq: {radarData.get('cFreq')}, PW: {radarData.get('PW')}")
+        #         #Print current radar settings
+        #         print(f"PRF: {radarData.get('prf')}, Gain: {radarData.get('gain')}, CFreq: {radarData.get('cFreq')}, PW: {radarData.get('PW')}")
 
-                #Start the run and time it
-                start_time = time.time()
-                runLoop1(UE, radarData, cfg, set_log_dir())
-                duration = time.time() - start_time
-                run_durations.append(duration)
+        #         #Start the run and time it
+        #         start_time = time.time()
+        #         runLoop1(UE, radarData, cfg, set_log_dir())
+        #         duration = time.time() - start_time
+        #         run_durations.append(duration)
 
-                if stop_requested:
-                    print("Keyboard interrupt received. Exiting after current runLoop1.")
-                    return
+        #         if stop_requested:
+        #             print("Keyboard interrupt received. Exiting after current runLoop1.")
+        #             return
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Will exit after the current runLoop1 finishes.")
         stop_requested = True

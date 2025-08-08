@@ -10,7 +10,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-folder = "processed_logs_20250805"
+folder = "processed_logs_20250806"
 
 prf_to_dlbrate = {}
 
