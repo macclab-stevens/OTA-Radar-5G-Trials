@@ -1,0 +1,4 @@
+Runs/
+logs*
+processed_logs*
+*.zip
