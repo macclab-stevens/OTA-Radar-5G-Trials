@@ -24,40 +24,62 @@ def extract_radar_config_from_log(gnb_log_path):
     """
     Extract radar configuration from gnb.log file.
     Looks for the "Radar_Char" line at the end of the log.
+    Handles multi-line radar config (when line is wrapped).
     
     Returns:
         dict: Radar configuration parameters, or None if not found
     """
     try:
         with open(gnb_log_path, 'r') as f:
-            lines = f.readlines()
+            content = f.read()
         
-        # Search backwards from end of file for Radar_Char line
-        for line in reversed(lines):
-            if 'Radar_Char' in line:
-                # Parse the radar config line
-                # Format: Radar_Char,prf=1000,gain=80,waveform=custom,...
-                
-                # Remove whitespace and split by commas
-                parts = line.strip().split(',')
-                
-                if len(parts) < 2:
-                    continue
-                
-                # First part should be "Radar_Char"
-                if parts[0].strip() != 'Radar_Char':
-                    continue
-                
-                # Parse key=value pairs
-                config = {}
-                for part in parts[1:]:
-                    if '=' in part:
-                        key, value = part.split('=', 1)
-                        config[key.strip()] = value.strip()
-                
-                return config
+        # Search for Radar_Char in the content
+        if 'Radar_Char' not in content:
+            return None
         
-        return None
+        # Find the last occurrence of Radar_Char
+        radar_idx = content.rfind('Radar_Char')
+        
+        # Extract from Radar_Char to the next newline (or up to 500 chars)
+        end_idx = content.find('\n', radar_idx)
+        if end_idx == -1:
+            end_idx = min(radar_idx + 500, len(content))
+        
+        radar_line = content[radar_idx:end_idx].strip()
+        
+        # If the line seems incomplete (doesn't have enough commas), check if there's a continuation
+        # Look for the next line and see if it continues the config
+        if end_idx < len(content):
+            next_line_end = content.find('\n', end_idx + 1)
+            if next_line_end == -1:
+                next_line_end = len(content)
+            next_line = content[end_idx + 1:next_line_end].strip()
+            
+            # If next line starts with a digit or decimal (likely continuation of a number)
+            if next_line and (next_line[0].isdigit() or next_line[0] == '.'):
+                radar_line += next_line
+        
+        # Remove any "(END)" prefix that might be from pager output
+        radar_line = radar_line.replace('(END)', '').strip()
+        
+        # Remove whitespace and split by commas
+        parts = radar_line.split(',')
+        
+        if len(parts) < 2:
+            return None
+        
+        # First part should be "Radar_Char"
+        if parts[0].strip() != 'Radar_Char':
+            return None
+        
+        # Parse key=value pairs
+        config = {}
+        for part in parts[1:]:
+            if '=' in part:
+                key, value = part.split('=', 1)
+                config[key.strip()] = value.strip()
+        
+        return config if config else None
     
     except Exception as e:
         print(f"  Error reading {gnb_log_path}: {e}")

@@ -379,27 +379,65 @@ def process_one_pair(gnbLogFileName, iperfLogFileName, out_folder, prefix=None):
 def radar_config_to_csv(gnb_log_path, out_csv_path):
     """
     Reads the last Radar_Char line from the gnb.log file and writes it as a CSV row.
+    Handles multi-line radar config (when line is wrapped).
     """
-    radar_line = None
-    with open(gnb_log_path, 'r') as f:
-        for line in reversed(f.readlines()):
-            if line.startswith("Radar_Char,"):
-                radar_line = line.strip()
-                break
-    if radar_line is None:
-        print("No Radar_Char line found in log.")
+    try:
+        with open(gnb_log_path, 'r') as f:
+            content = f.read()
+        
+        # Search for Radar_Char in the content
+        if 'Radar_Char' not in content:
+            print("No Radar_Char line found in log.")
+            return
+        
+        # Find the last occurrence of Radar_Char
+        radar_idx = content.rfind('Radar_Char')
+        
+        # Extract from Radar_Char to the next newline (or up to 500 chars)
+        end_idx = content.find('\n', radar_idx)
+        if end_idx == -1:
+            end_idx = min(radar_idx + 500, len(content))
+        
+        radar_line = content[radar_idx:end_idx].strip()
+        
+        # If the line seems incomplete, check if there's a continuation on the next line
+        if end_idx < len(content):
+            next_line_end = content.find('\n', end_idx + 1)
+            if next_line_end == -1:
+                next_line_end = len(content)
+            next_line = content[end_idx + 1:next_line_end].strip()
+            
+            # If next line starts with a digit or decimal (likely continuation of a number)
+            if next_line and (next_line[0].isdigit() or next_line[0] == '.'):
+                radar_line += next_line
+        
+        # Remove any "(END)" prefix that might be from pager output
+        radar_line = radar_line.replace('(END)', '').strip()
+        
+        # Parse the Radar_Char line into a dict
+        parts = radar_line.split(',')
+        
+        if len(parts) < 2 or parts[0].strip() != 'Radar_Char':
+            print("Invalid Radar_Char format in log.")
+            return
+        
+        radar_dict = {}
+        for part in parts[1:]:
+            if '=' in part:
+                k, v = part.split('=', 1)
+                radar_dict[k.strip()] = v.strip()
+        
+        if not radar_dict:
+            print("No radar parameters found in Radar_Char line.")
+            return
+        
+        # Write to CSV
+        df = pd.DataFrame([radar_dict])
+        df.to_csv(out_csv_path, index=False)
+        
+    except Exception as e:
+        print(f"Error processing radar config: {e}")
         return
-
-    # Parse the Radar_Char line into a dict
-    parts = radar_line.split(',')
-    radar_dict = {}
-    for part in parts[1:]:
-        if '=' in part:
-            k, v = part.split('=', 1)
-            radar_dict[k.strip()] = v.strip()
-    # Write to CSV
-    df = pd.DataFrame([radar_dict])
-    df.to_csv(out_csv_path, index=False)
 
 def main():
     print("Log Processing Script")
