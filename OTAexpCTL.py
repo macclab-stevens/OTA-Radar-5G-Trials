@@ -9,6 +9,7 @@ import yaml
 import numpy as np
 from android_controller import AndroidController
 import time
+import argparse
 
 #Files
 gnbConfigDFLT ="/home/eric/srsRAN_Project/configs/00101__gnb_rf_b200_tdd_n78_20mhz.yml"
@@ -30,7 +31,7 @@ iperfStop = 'pkill -f iperf3'
 
 #set Default Radar Params
 radarData = {
-        "prf": 200,  # Initial PRF value
+        "prf": 100,  # Initial PRF value
         "gain": 80,
         "cFreq": 3417.1e6,
         "PW": 100e-6,
@@ -96,10 +97,25 @@ def adbCMD(CMD):
     output, error = process.communicate()
     print(output)
 
-def collectLogs(radarData, iperfStart_T,folder ):
+def collectLogs(radarData, iperfStart_T, folder):
+    """
+    Collect raw logs and save them to a timestamped subfolder.
+    """
     LogNametimestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    iperf_dst = os.path.join(folder, f"{LogNametimestamp}_iperf3.log")
-    gnb_dst = os.path.join(folder, f"{LogNametimestamp}_gnb.log")
+    
+    # Create a timestamped subdirectory for this iteration
+    iteration_folder = os.path.join(folder, LogNametimestamp)
+    os.makedirs(iteration_folder, exist_ok=True)
+    
+    # Fix permissions so non-root processes can write
+    try:
+        subprocess.run(['chmod', '777', iteration_folder], check=True)
+    except Exception as e:
+        print(f"Warning: Could not set permissions on {iteration_folder}: {e}")
+    
+    iperf_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_iperf3.log")
+    gnb_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_gnb.log")
+    
     try:
         shutil.copy("/tmp/iperf3.log", iperf_dst)
         print(f"Saved /tmp/iperf3.log as {iperf_dst}")
@@ -130,14 +146,25 @@ def collectLogs(radarData, iperfStart_T,folder ):
 def ProcessGnbLogs(radarData, iperfStart_T, folder):
     """
     appends radar info, and processes gnb.log to generate CSVs.
+    Creates a timestamped subfolder for each iteration's logs.
     """
     LogNametimestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     iperf_src = "/tmp/iperf3.log"
     gnb_src = "/tmp/gnb.log"
     
-    # Create destination paths in the logs folder
-    iperf_dst = os.path.join(folder, f"{LogNametimestamp}_iperf3.log")
-    gnb_dst = os.path.join(folder, f"{LogNametimestamp}_gnb.log")
+    # Create a timestamped subdirectory for this iteration
+    iteration_folder = os.path.join(folder, LogNametimestamp)
+    os.makedirs(iteration_folder, exist_ok=True)
+    
+    # Fix permissions so non-root processes can write
+    try:
+        subprocess.run(['chmod', '777', iteration_folder], check=True)
+    except Exception as e:
+        print(f"Warning: Could not set permissions on {iteration_folder}: {e}")
+    
+    # Create destination paths in the timestamped folder
+    iperf_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_iperf3.log")
+    gnb_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_gnb.log")
     
     # gnb writes its logs directly to /tmp/gnb.log (configured in the gnb yaml)
     # No need to extract from journalctl - just use the existing file
@@ -175,22 +202,7 @@ def ProcessGnbLogs(radarData, iperfStart_T, folder):
     except Exception as e:
         print(f"Could not append radarData to {iperf_dst}: {e}")
     
-    # Create a CSV file with radar parameters
-    try:
-        radar_csv_path = os.path.join(folder, f"{LogNametimestamp}_radar_params.csv")
-        with open(radar_csv_path, "w") as f:
-            # Write header
-            f.write(",".join(radarData.keys()) + ",timestamp,iperf_command\n")
-            # Write values
-            values = [str(radarData[k]) for k in radarData.keys()]
-            values.append(iperfStart_T)
-            values.append(iperfStart)
-            f.write(",".join(values) + "\n")
-        print(f"Created radar parameters CSV: {radar_csv_path}")
-    except Exception as e:
-        print(f"Could not create radar CSV: {e}")
-
-    # Process the COPIED log files (now in the logs folder)
+    # Process the COPIED log files (now in the timestamped folder)
     # Note: LogProcessing.py expects [METRICS ] tags which may not be present in journalctl output
     # It will process iperf logs and any metrics if they exist
     try:
@@ -200,7 +212,7 @@ def ProcessGnbLogs(radarData, iperfStart_T, folder):
             "/home/eric/OTA-Radar-5G-Trials/LogProcessing.py",
             "--gnb-log", gnb_dst,       # Use copied file
             "--iperf-log", iperf_dst,   # Use copied file
-            "--out-dir", folder,
+            "--out-dir", iteration_folder,  # Output to timestamped folder
             "--prefix", prefix
         ]
         print(f"Processing logs with: {' '.join(log_proc_cmd)}")
@@ -303,16 +315,52 @@ def runLoop1(UE, radarValues, gnbConfig, logDIR):
     sleep(1)
     return True
 
-def set_log_dir():
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_dir = "/home/eric/OTA-Experiment-Runs"
-    os.makedirs(base_dir, exist_ok=True)
-    log_dir = os.path.join(base_dir, f"logs_{timestamp}")
-    os.makedirs(log_dir, exist_ok=True)
-    return log_dir
+def set_log_dir(base_experiment_dir, run_number):
+    """
+    Create a subdirectory for each run within the base experiment directory.
+    
+    Args:
+        base_experiment_dir: The main directory for this experiment (e.g., /home/eric/OTA-Experiment-Runs/logs_20251205_123456)
+        run_number: The current run number (e.g., 1, 2, 3...)
+    
+    Returns:
+        Path to the run-specific directory (e.g., /home/eric/OTA-Experiment-Runs/logs_20251205_123456/run1)
+    """
+    run_dir = os.path.join(base_experiment_dir, f"run{run_number}")
+    os.makedirs(run_dir, exist_ok=True)
+    
+    # Fix permissions so non-root processes can write
+    try:
+        subprocess.run(['chmod', '777', run_dir], check=True)
+    except Exception as e:
+        print(f"Warning: Could not set permissions on {run_dir}: {e}")
+    
+    return run_dir
 
 def main():
     print("Main")
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='OTA Experiment Control Script')
+    parser.add_argument('-f', '--folder', type=str, default=None,
+                        help='Folder name for saving results (default: logs_YYYYMMDD_HHMMSS)')
+    args = parser.parse_args()
+    
+    # Setup base experiment directory
+    base_dir = "/home/eric/OTA-Experiment-Runs"
+    os.makedirs(base_dir, exist_ok=True)
+    
+    if args.folder:
+        # Use user-specified folder name
+        experiment_dir = os.path.join(base_dir, args.folder)
+    else:
+        # Use timestamp-based folder name
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        experiment_dir = os.path.join(base_dir, f"logs_{timestamp}")
+    
+    os.makedirs(experiment_dir, exist_ok=True)
+    print(f"Experiment directory: {experiment_dir}")
+    
     cfg = readGnbConfig(gnbConfigRadar)
     UE = AndroidController()
     stop_requested = False
@@ -323,33 +371,40 @@ def main():
     pw_values = [us * 1e-6 for us in range(1, 1001, 2)]
     n_repeats = 5  # Number of times to repeat each gain
     total_runs = len(pw_values) * n_repeats
-    run_count = 5
+    iteration_count = 0
     run_durations = []
 
     try:
         # runLoop1(UE, radarData, cfg, set_log_dir())
         for repeat in range(n_repeats):
+            # Create run-specific directory for this repeat
+            run_log_dir = set_log_dir(experiment_dir, repeat + 1)
+            print(f"\n{'='*70}")
+            print(f"Starting Repeat {repeat + 1}/{n_repeats}")
+            print(f"Saving to: {run_log_dir}")
+            print(f"{'='*70}\n")
+            
             for PW in pw_values:
                 radarData.update({'PW': PW})
-                run_count += 1
+                iteration_count += 1
 
                 # Estimate time
                 if run_durations:
                     avg_duration = sum(run_durations) / len(run_durations)
-                    runs_left = total_runs - run_count + 1
+                    runs_left = total_runs - iteration_count + 1
                     est_remaining = avg_duration * runs_left
                     est_end_time = datetime.now() + timedelta(seconds=est_remaining)
                     hours = int(est_remaining // 3600)
                     minutes = int((est_remaining % 3600) // 60)
                     seconds = int(est_remaining % 60)
-                    print(f"\nRun {run_count}/{total_runs} | Gain: {gain}")
+                    print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | Gain: {gain}")
                     if hours > 0:
                         print(f"Estimated time left: {hours} hr {minutes} min {seconds} sec")
                     else:
                         print(f"Estimated time left: {minutes} min {seconds} sec")
                     print(f"Estimated end time: {est_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
                 else:
-                    print(f"\nRun {run_count}/{total_runs} | Gain: {gain}")
+                    print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | Gain: {gain}")
                     print("Estimating time after first run...")
 
                 #Print current radar settings
@@ -357,7 +412,7 @@ def main():
 
                 #Start the run and time it
                 start_time = time.time()
-                runLoop1(UE, radarData, cfg, set_log_dir())
+                runLoop1(UE, radarData, cfg, run_log_dir)
                 duration = time.time() - start_time
                 run_durations.append(duration)
 
