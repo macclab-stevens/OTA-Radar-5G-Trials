@@ -120,4 +120,14 @@ min_rb_size: 1
 ```
 ![System Setup](/images/20250807_prbBlankingExperiment.png)
 
+# Experiment Results:
+PRF 1000 PW 10uS 
+MCS Locked 27 
+Estimated Throughput under interference: ~39.07Mbps
+<img width="868" height="480" alt="image" src="https://github.com/user-attachments/assets/48503520-6f2f-4f72-ba51-9568e60230d0" />
+
+PRF 100 PW 10uS
+MCS Locked 27 
+Estimed Thgouhput under interference: 63.8Mbps
+<img width="857" height="520" alt="image" src="https://github.com/user-attachments/assets/1b5af4a4-6e3a-4603-a9a0-8083e8cf3a83" />
 
