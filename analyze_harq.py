@@ -24,6 +24,11 @@ def parse_gnb_log(log_file):
     harq_data = []
     discard_data = []
     current_timestamp = None
+    current_slot = None
+    
+    # Track recent PDSCH transmissions by (rnti, h_id) to match with HARQ-ACKs
+    # Key: (rnti, h_id), Value: {'slot': dl_slot, 'k1': k1_value}
+    recent_pdsch = {}
     
     with open(log_file, 'r') as f:
         for line in f:
@@ -31,6 +36,12 @@ def parse_gnb_log(log_file):
             ts_match = re.match(r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+)', line)
             if ts_match:
                 current_timestamp = ts_match.group(1)
+            
+            # Extract slot from "Slot decisions" lines
+            # Example: [  295.12] Slot decisions
+            slot_line_match = re.search(r'\[\s*([\d.]+)\]\s+Slot decision', line)
+            if slot_line_match:
+                current_slot = float(slot_line_match.group(1))
             
             # Parse PDSCH lines (may not have timestamp on same line)
             # Example: - UE PDSCH: ue=0 c-rnti=0x4601 h_id=0 rb=[0..23) symb=[2..14) tbs=317 mcs=7 rv=0 nrtx=0 k1=7 dl_bo=0 olla=0
@@ -42,13 +53,27 @@ def parse_gnb_log(log_file):
                 tbs_match = re.search(r'tbs=(\d+)', line)
                 nrtx_match = re.search(r'nrtx=(\d+)', line)
                 rv_match = re.search(r'rv=(\d+)', line)
+                k1_match = re.search(r'k1=(\d+)', line)
                 
                 if ue_match and rnti_match and h_id_match:
+                    rnti = rnti_match.group(1)
+                    h_id = int(h_id_match.group(1))
+                    k1 = int(k1_match.group(1)) if k1_match else None
+                    
+                    # Store PDSCH with DL slot for later HARQ-ACK matching
+                    if current_slot is not None and k1 is not None:
+                        recent_pdsch[(rnti, h_id)] = {
+                            'slot': current_slot,
+                            'k1': k1
+                        }
+                    
                     pdsch_data.append({
                         'time': current_timestamp,
                         'ue': int(ue_match.group(1)),
-                        'rnti': rnti_match.group(1),
-                        'h_id': int(h_id_match.group(1)),
+                        'rnti': rnti,
+                        'h_id': h_id,
+                        'slot': current_slot,
+                        'k1': k1,
                         'mcs': int(mcs_match.group(1)) if mcs_match else None,
                         'tbs': int(tbs_match.group(1)) if tbs_match else None,
                         'nrtx': int(nrtx_match.group(1)) if nrtx_match else 0,
@@ -61,18 +86,37 @@ def parse_gnb_log(log_file):
             if '- HARQ-ACK:' in line:
                 ue_match = re.search(r'ue=(\d+)', line)
                 rnti_match = re.search(r'rnti=(0x[0-9a-fA-F]+)', line)
-                slot_match = re.search(r'slot_rx=([\d.]+)', line)
+                slot_rx_match = re.search(r'slot_rx=([\d.]+)', line)
                 h_id_match = re.search(r'h_id=(\d+)', line)
                 ack_match = re.search(r'ack=(\d+)', line)
                 tbs_match = re.search(r'tbs=(\d+)', line)
                 
-                if ue_match and rnti_match and slot_match and h_id_match and ack_match:
+                if ue_match and rnti_match and slot_rx_match and h_id_match and ack_match:
+                    rnti = rnti_match.group(1)
+                    h_id = int(h_id_match.group(1))
+                    slot_rx = float(slot_rx_match.group(1))
+                    
+                    # Use actual DL slot from the matched PDSCH transmission
+                    dl_slot = slot_rx  # Default to slot_rx if no match found
+                    k1_value = None
+                    pdsch_key = (rnti, h_id)
+                    
+                    if pdsch_key in recent_pdsch:
+                        pdsch_info = recent_pdsch[pdsch_key]
+                        k1_value = pdsch_info['k1']
+                        # Use the actual DL transmission slot from PDSCH
+                        dl_slot = pdsch_info['slot']
+                        # Clean up old entry
+                        del recent_pdsch[pdsch_key]
+                    
                     harq_data.append({
                         'time': current_timestamp,
                         'ue': int(ue_match.group(1)),
-                        'rnti': rnti_match.group(1),
-                        'h_id': int(h_id_match.group(1)),
-                        'slot': float(slot_match.group(1)),
+                        'rnti': rnti,
+                        'h_id': h_id,
+                        'slot_rx': slot_rx,  # UL slot where ACK was received
+                        'slot': dl_slot,      # DL slot where PDSCH was transmitted
+                        'k1': k1_value,
                         'ack': int(ack_match.group(1)),
                         'tbs': int(tbs_match.group(1)) if tbs_match else None,
                         'type': 'HARQ-ACK'
