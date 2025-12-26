@@ -136,3 +136,9 @@ In this example the slot .3 is not ack'd therefore "lost" and thus what we see i
 <img width="910" height="713" alt="image" src="https://github.com/user-attachments/assets/e25c07fc-c76b-40c7-92e8-d518379cfccf" />
 <img width="1060" height="587" alt="image" src="https://github.com/user-attachments/assets/a4b64884-fc9c-4d3c-ae65-144c7549154c" />
 
+
+PDCCH interference is shows as an ACK=2 where the UE is saying there was nothing to decode, and is in a state of dTX (Discontinuous transmission). There is nothing for the UE to decode because the PDCCH was not deocded correctly instead of the PDSCH.  
+<img width="646" height="381" alt="image" src="https://github.com/user-attachments/assets/90115b21-f24a-4a2c-8a1a-ba7c6fb630fc" />
+
+
+
