@@ -131,3 +131,8 @@ MCS Locked 27
 Estimed Thgouhput under interference: 63.8Mbps
 <img width="857" height="520" alt="image" src="https://github.com/user-attachments/assets/1b5af4a4-6e3a-4603-a9a0-8083e8cf3a83" />
 
+HARQ Logging view of 100Mhz PRF (every 10ms) which is one subframe. Which is every 1 per 0-20 slots. 
+In this example the slot .3 is not ack'd therefore "lost" and thus what we see in the nok's also. 
+<img width="910" height="713" alt="image" src="https://github.com/user-attachments/assets/e25c07fc-c76b-40c7-92e8-d518379cfccf" />
+<img width="1060" height="587" alt="image" src="https://github.com/user-attachments/assets/a4b64884-fc9c-4d3c-ae65-144c7549154c" />
+
