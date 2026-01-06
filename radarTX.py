@@ -107,6 +107,7 @@ def main():
 
     # Transmit
     usrp.set_tx_bandwidth(f1, 0)
+    usrp.set_clock_source("external")
     usrp.send_waveform(waveform, len(waveform) / sample_rate, center_freq, sample_rate, [0], gain)
     print("Transmission complete!")
 

@@ -26,7 +26,7 @@ apDisable = 'adb shell cmd connectivity airplane-mode disable' #disable AP Mode.
 gnbStart = 'sudo systemctl start gnb.service'
 gnbStat = 'sudo systemctl status gnb.service'
 gnbStop = 'sudo systemctl stop gnb.service'
-iperfStart = 'iperf3 -p 5201 -c 10.45.0.2 -b 60M -t 0 --logfile /tmp/iperf3.log &'
+iperfStart = 'iperf3 -p 5201 -c 10.45.0.2 -b 70M -t 0 --logfile /tmp/iperf3.log &'
 iperfStop = 'pkill -f iperf3'
 
 #set Default Radar Params
@@ -239,6 +239,88 @@ def readGnbConfig(config_path):
         config = yaml.safe_load(file)
     return config
 
+def update_yaml_parameter(yaml_path, param_path, value):
+    """
+    Update a parameter in a YAML file by modifying the line directly.
+    This preserves comments and formatting.
+    
+    Args:
+        yaml_path: Path to the YAML file
+        param_path: Dot-separated path to the parameter (e.g., "cell_cfg.pdsch.min_ue_mcs")
+        value: New value to set
+    
+    Example:
+        update_yaml_parameter(gnbConfigRadar, "cell_cfg.pdsch.min_ue_mcs", 15)
+    """
+    # Get the final parameter name
+    param_name = param_path.split('.')[-1]
+    
+    # Read the file
+    with open(yaml_path, 'r') as f:
+        lines = f.readlines()
+    
+    # Find and update the parameter line
+    modified = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # Check if this line defines the parameter (not commented, has the parameter name followed by :)
+        if not stripped.startswith('#') and stripped.startswith(f'{param_name}:'):
+            # Get the indentation
+            indent = len(line) - len(line.lstrip())
+            # Find if there's a comment on the line
+            if '#' in stripped:
+                # Preserve the comment
+                comment_idx = line.find('#')
+                comment = line[comment_idx:]
+                lines[i] = f"{' ' * indent}{param_name}: {value}  {comment}"
+            else:
+                lines[i] = f"{' ' * indent}{param_name}: {value}\n"
+            modified = True
+            print(f"Updated {param_name} = {value}")
+            break
+    
+    if not modified:
+        print(f"Warning: Parameter {param_name} not found in {yaml_path}")
+        return False
+    
+    # Write back to file
+    with open(yaml_path, 'w') as f:
+        f.writelines(lines)
+    
+    return True
+
+def uncomment_yaml_line(yaml_path, parameter_name):
+    """
+    Uncomment a line in YAML file that starts with # followed by the parameter name.
+    This is useful for parameters that are commented out by default.
+    
+    Args:
+        yaml_path: Path to the YAML file
+        parameter_name: Name of the parameter to uncomment (e.g., "min_ue_mcs")
+    """
+    with open(yaml_path, 'r') as f:
+        lines = f.readlines()
+    
+    modified = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # Check if line is commented and contains the parameter
+        if stripped.startswith('#') and parameter_name in stripped:
+            # Check if it's the parameter definition (has ':' after parameter name)
+            if f'{parameter_name}:' in stripped:
+                # Remove the '#' and any spaces after it
+                lines[i] = line.replace('#', '', 1).lstrip()
+                modified = True
+                print(f"Uncommented line: {lines[i].strip()}")
+                break
+    
+    if modified:
+        with open(yaml_path, 'w') as f:
+            f.writelines(lines)
+        print(f"Uncommented {parameter_name} in {yaml_path}")
+    else:
+        print(f"Parameter {parameter_name} not found or already uncommented in {yaml_path}")
+
 def reset_usrp_usb():
     try:
         # Get lsusb output
@@ -338,25 +420,43 @@ def set_log_dir(base_experiment_dir, run_number):
     return run_dir
 
 def main():
+    """
+    Main experiment control function.
+    
+    EXAMPLE: MCS Sweep (no radar parameter changes)
+    To sweep min_ue_mcs from 0 to 28 without changing radar characteristics:
+    
+    1. Uncomment the MCS sweep section below
+    2. Comment out the PW sweep section
+    3. Run: python3 OTAexpCTL.py -f mcs_sweep_experiment
+    
+    EXAMPLE: Radar Parameter Sweep
+    To sweep radar parameters (PW, PRF, gain, etc.):
+    
+    1. Keep the PW sweep section uncommented
+    2. Modify radarData parameters as needed
+    3. Run: python3 OTAexpCTL.py -f radar_pw_sweep
+    
+    EXAMPLE: Combined MCS + Radar Sweep
+    To sweep both MCS and radar parameters:
+    
+    1. Add a nested loop for MCS inside the radar sweep
+    2. Update min_ue_mcs before each runLoop1 call
+    """
     print("Main")
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='OTA Experiment Control Script')
-    parser.add_argument('-f', '--folder', type=str, default=None,
-                        help='Folder name for saving results (default: logs_YYYYMMDD_HHMMSS)')
+    parser.add_argument('-f', '--folder', type=str, required=True,
+                        help='Folder name for saving results')
     args = parser.parse_args()
     
     # Setup base experiment directory
     base_dir = "/home/eric/OTA-Experiment-Runs"
     os.makedirs(base_dir, exist_ok=True)
     
-    if args.folder:
-        # Use user-specified folder name
-        experiment_dir = os.path.join(base_dir, args.folder)
-    else:
-        # Use timestamp-based folder name
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        experiment_dir = os.path.join(base_dir, f"logs_{timestamp}")
+    # Use user-specified folder name
+    experiment_dir = os.path.join(base_dir, args.folder)
     
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Experiment directory: {experiment_dir}")
@@ -365,17 +465,28 @@ def main():
     UE = AndroidController()
     stop_requested = False
 
-    # Prepare sweep parameters
-    gain = 80 # Fixed gain for this sweep
-    # pw_values = list(range(1e-6, 1000e-6, +5)) # 5 to 5000 inclusive
-    pw_values = [us * 1e-6 for us in range(1, 1001, 2)]
-    n_repeats = 5  # Number of times to repeat each gain
-    total_runs = len(pw_values) * n_repeats
+    # ==================== MCS SWEEP CONFIGURATION ====================
+    # MCS sweep from 27 to 0 (decrementally)
+    # Both min_ue_mcs and max_ue_mcs will be set to the same value
+    # Radar parameters remain FIXED
+    mcs_values = [27]  # Only MCS 27
+    gain_values = list(range(20, 70, 1))  # Radar gain from 50 to 90 (step 1)
+    n_repeats = 10  # Number of times to repeat each MCS value
+    total_runs = len(mcs_values) * len(gain_values) * n_repeats
     iteration_count = 0
     run_durations = []
+    
+    print(f"\nMCS and Radar Gain Sweep Configuration:")
+    print(f"  MCS values: {mcs_values}")
+    print(f"  Radar Gain values: {gain_values[0]} to {gain_values[-1]} dB (step: 1)")
+    print(f"  Repeats per configuration: {n_repeats}")
+    print(f"  Total runs: {total_runs}")
+    print(f"  Radar settings (FIXED):")
+    print(f"    PRF: {radarData['prf']} Hz")
+    print(f"    PW: {radarData['PW']*1e6:.2f} µs")
+    print(f"    T: {radarData['T']} seconds")
 
     try:
-        # runLoop1(UE, radarData, cfg, set_log_dir())
         for repeat in range(n_repeats):
             # Create run-specific directory for this repeat
             run_log_dir = set_log_dir(experiment_dir, repeat + 1)
@@ -383,42 +494,47 @@ def main():
             print(f"Starting Repeat {repeat + 1}/{n_repeats}")
             print(f"Saving to: {run_log_dir}")
             print(f"{'='*70}\n")
-            
-            for PW in pw_values:
-                radarData.update({'PW': PW})
-                iteration_count += 1
+            for gain in gain_values:
+                radarData['gain'] = gain
+                for mcs in mcs_values:
+                    iteration_count += 1
+                
+                # # Update both min_ue_mcs and max_ue_mcs to the same value in the gNB config file
+                # # print(f"\nUpdating min_ue_mcs and max_ue_mcs to {mcs}...")
+                # # update_yaml_parameter(gnbConfigRadar, "cell_cfg.pdsch.min_ue_mcs", mcs)
+                # # update_yaml_parameter(gnbConfigRadar, "cell_cfg.pdsch.max_ue_mcs", mcs)
 
-                # Estimate time
-                if run_durations:
-                    avg_duration = sum(run_durations) / len(run_durations)
-                    runs_left = total_runs - iteration_count + 1
-                    est_remaining = avg_duration * runs_left
-                    est_end_time = datetime.now() + timedelta(seconds=est_remaining)
-                    hours = int(est_remaining // 3600)
-                    minutes = int((est_remaining % 3600) // 60)
-                    seconds = int(est_remaining % 60)
-                    print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | Gain: {gain}")
-                    if hours > 0:
-                        print(f"Estimated time left: {hours} hr {minutes} min {seconds} sec")
+                    # Estimate time
+                    if run_durations:
+                        avg_duration = sum(run_durations) / len(run_durations)
+                        runs_left = total_runs - iteration_count + 1
+                        est_remaining = avg_duration * runs_left
+                        est_end_time = datetime.now() + timedelta(seconds=est_remaining)
+                        hours = int(est_remaining // 3600)
+                        minutes = int((est_remaining % 3600) // 60)
+                        seconds = int(est_remaining % 60)
+                        print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | MCS: {mcs} | Gain: {gain} dB")
+                        if hours > 0:
+                            print(f"Estimated time left: {hours} hr {minutes} min {seconds} sec")
+                        else:
+                            print(f"Estimated time left: {minutes} min {seconds} sec")
+                        print(f"Estimated end time: {est_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
                     else:
-                        print(f"Estimated time left: {minutes} min {seconds} sec")
-                    print(f"Estimated end time: {est_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                else:
-                    print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | Gain: {gain}")
-                    print("Estimating time after first run...")
+                        print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | MCS: {mcs} | Gain: {gain} dB")
+                        print("Estimating time after first run...")
 
-                #Print current radar settings
-                print(f"PRF: {radarData.get('prf')}, Gain: {radarData.get('gain')}, CFreq: {radarData.get('cFreq')}, PW: {radarData.get('PW')}")
+                    # Print current settings
+                    print(f"Current config: MCS={mcs}, PRF={radarData['prf']}, Gain={radarData['gain']}, PW={radarData['PW']*1e6:.2f}µs")
 
-                #Start the run and time it
-                start_time = time.time()
-                runLoop1(UE, radarData, cfg, run_log_dir)
-                duration = time.time() - start_time
-                run_durations.append(duration)
+                    # Start the run and time it
+                    start_time = time.time()
+                    runLoop1(UE, radarData, cfg, run_log_dir)
+                    duration = time.time() - start_time
+                    run_durations.append(duration)
 
-                if stop_requested:
-                    print("Keyboard interrupt received. Exiting after current runLoop1.")
-                    return
+                    if stop_requested:
+                        print("Keyboard interrupt received. Exiting after current runLoop1.")
+                        return
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Will exit after the current runLoop1 finishes.")
         stop_requested = True

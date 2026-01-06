@@ -696,7 +696,7 @@ def plot_harq_acks_over_time(results_df, output_file='./harq_acks_over_time.png'
     results_df_sorted = results_df.sort_values('relative_time_s')
     rolling_success = results_df_sorted['success'].rolling(window=window_size, min_periods=1).mean() * 100
     
-    ax2.plot(results_df_sorted['relative_time_s'], rolling_success, 
+    ax2.plot(results_df_sorted['relative_time_s'].values, rolling_success.values, 
              color='blue', linewidth=1.5, label=f'{window_size}-transmission moving average')
     ax2.axhline(y=rolling_success.mean(), color='red', linestyle='--', 
                 label=f'Overall average: {rolling_success.mean():.2f}%')
@@ -761,7 +761,7 @@ def plot_harq_acks_over_time(results_df, output_file='./harq_acks_over_time.png'
     sfn_stats.columns = ['successful', 'total', 'success_rate']
     sfn_stats['success_rate_pct'] = sfn_stats['success_rate'] * 100
     
-    ax.plot(sfn_stats.index, sfn_stats['success_rate_pct'], 
+    ax.plot(sfn_stats.index.values, sfn_stats['success_rate_pct'].values, 
             marker='o', markersize=3, linewidth=1, color='blue', alpha=0.7)
     ax.axhline(y=results_df['success'].mean() * 100, color='red', linestyle='--', 
                label=f'Overall: {results_df["success"].mean()*100:.2f}%')
