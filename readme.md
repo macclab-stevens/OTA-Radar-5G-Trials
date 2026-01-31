@@ -140,5 +140,47 @@ In this example the slot .3 is not ack'd therefore "lost" and thus what we see i
 PDCCH interference is shows as an ACK=2 where the UE is saying there was nothing to decode, and is in a state of dTX (Discontinuous transmission). There is nothing for the UE to decode because the PDCCH was not deocded correctly instead of the PDSCH.  
 <img width="646" height="381" alt="image" src="https://github.com/user-attachments/assets/90115b21-f24a-4a2c-8a1a-ba7c6fb630fc" />
 
+in a x1000 run example with PRF = 100Hz
+```
+ericforbes@Erics-Laptop 1000x-run-offline %  python3 threshold_analysis.py
+Visualization saved as 'threshold_percentage_analysis.png'
 
+Detailed Statistics:
+------------------------------------------------------------
+Threshold    Count Above     % Above      Count Below 
+------------------------------------------------------------
+0            11545           100.00       0           
+100          1139            9.87         10406       
+200          1097            9.50         10448       
+300          1055            9.14         10490       
+400          1020            8.83         10525       
+500          977             8.46         10568       
+600          943             8.17         10602       
+700          908             7.86         10637       
+800          881             7.63         10664       
+900          844             7.31         10701       
+1000         823             7.13         10722       
+1100         790             6.84         10755       
+1200         765             6.63         10780       
+1300         742             6.43         10803       
+1400         723             6.26         10822       
+1500         695             6.02         10850       
+1600         672             5.82         10873       
+1700         634             5.49         10911       
+1800         597             5.17         10948       
+1900         544             4.71         11001       
+2000         130             1.13         11415       
+2100         0               0.00         11545       
+2200         0               0.00         11545       
+2300         0               0.00         11545       
+2400         0               0.00         11545       
+------------------------------------------------------------
+
+Specific thresholds:
+Threshold 1200: 765 rows (6.63%) above
+Threshold 1500: 695 rows (6.02%) above
+Threshold 1600: 672 rows (5.82%) above
+Threshold 1700: 634 rows (5.49%) above
+Threshold 1800: 597 rows (5.17%) above
+```
 
