@@ -184,3 +184,7 @@ Threshold 1700: 634 rows (5.49%) above
 Threshold 1800: 597 rows (5.17%) above
 ```
 
+
+PDCCH Interference:
+<img width="696" height="784" alt="image" src="https://github.com/user-attachments/assets/a4d1e9ec-eec9-41a8-ac9d-bbda0d8bb4e0" />
+
