@@ -34,7 +34,7 @@ radarData = {
         "prf": 100,  # Initial PRF value
         "gain": 80,
         "cFreq": 3417.1e6,
-        "PW": 100e-6,
+        "PW": 20e-6,
         "T": 20,
         "bw": 2e6,
         "sampRate": 20e6
@@ -470,15 +470,17 @@ def main():
     # Both min_ue_mcs and max_ue_mcs will be set to the same value
     # Radar parameters remain FIXED
     mcs_values = [27]  # Only MCS 27
-    gain_values = list(range(20, 70, 1))  # Radar gain from 50 to 90 (step 1)
-    n_repeats = 10  # Number of times to repeat each MCS value
-    total_runs = len(mcs_values) * len(gain_values) * n_repeats
+    # gain_values = list(range(20, 51, 2))  # Radar gain from 20 to 50 (step 2)
+    # cFreq_values = [round(3417.1e6 + i * 0.2e6, 1) for i in range(int((3423 - 3417.1) / 0.2) + 1)]  # Center freq from 3417.1 to 3423 MHz (step 0.2 MHz)
+    n_repeats = 1000  # Number of times to repeat each MCS value
+    total_runs = len(mcs_values) * n_repeats
     iteration_count = 0
     run_durations = []
     
-    print(f"\nMCS and Radar Gain Sweep Configuration:")
+    print(f"\nMCS, Radar Gain, and Center Frequency Sweep Configuration:")
     print(f"  MCS values: {mcs_values}")
-    print(f"  Radar Gain values: {gain_values[0]} to {gain_values[-1]} dB (step: 1)")
+    # print(f"  Radar Gain values: {gain_values[0]} to {gain_values[-1]} dB (step: 2)")
+    # print(f"  Center Frequency values: {cFreq_values[0]/1e6:.1f} to {cFreq_values[-1]/1e6:.1f} MHz (step: 0.2 MHz)")
     print(f"  Repeats per configuration: {n_repeats}")
     print(f"  Total runs: {total_runs}")
     print(f"  Radar settings (FIXED):")
@@ -494,10 +496,15 @@ def main():
             print(f"Starting Repeat {repeat + 1}/{n_repeats}")
             print(f"Saving to: {run_log_dir}")
             print(f"{'='*70}\n")
-            for gain in gain_values:
-                radarData['gain'] = gain
-                for mcs in mcs_values:
-                    iteration_count += 1
+            mcs = mcs_values[0]  # Only one MCS value in this configuration
+            gain = radarData['gain']  # Fixed gain
+            cFreq = radarData['cFreq']  # Fixed center frequency
+            # for gain in gain_values:
+            #     radarData['gain'] = gain
+            #     for cFreq in cFreq_values:
+            #         radarData['cFreq'] = cFreq
+            #         for mcs in mcs_values:
+            #             iteration_count += 1
                 
                 # # Update both min_ue_mcs and max_ue_mcs to the same value in the gNB config file
                 # # print(f"\nUpdating min_ue_mcs and max_ue_mcs to {mcs}...")
@@ -505,36 +512,36 @@ def main():
                 # # update_yaml_parameter(gnbConfigRadar, "cell_cfg.pdsch.max_ue_mcs", mcs)
 
                     # Estimate time
-                    if run_durations:
-                        avg_duration = sum(run_durations) / len(run_durations)
-                        runs_left = total_runs - iteration_count + 1
-                        est_remaining = avg_duration * runs_left
-                        est_end_time = datetime.now() + timedelta(seconds=est_remaining)
-                        hours = int(est_remaining // 3600)
-                        minutes = int((est_remaining % 3600) // 60)
-                        seconds = int(est_remaining % 60)
-                        print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | MCS: {mcs} | Gain: {gain} dB")
-                        if hours > 0:
-                            print(f"Estimated time left: {hours} hr {minutes} min {seconds} sec")
-                        else:
-                            print(f"Estimated time left: {minutes} min {seconds} sec")
-                        print(f"Estimated end time: {est_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                    else:
-                        print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | MCS: {mcs} | Gain: {gain} dB")
-                        print("Estimating time after first run...")
+            if run_durations:
+                avg_duration = sum(run_durations) / len(run_durations)
+                runs_left = total_runs - iteration_count + 1
+                est_remaining = avg_duration * runs_left
+                est_end_time = datetime.now() + timedelta(seconds=est_remaining)
+                hours = int(est_remaining // 3600)
+                minutes = int((est_remaining % 3600) // 60)
+                seconds = int(est_remaining % 60)
+                print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | MCS: {mcs} | Gain: {gain} dB | CFreq: {cFreq/1e6:.1f} MHz")
+                if hours > 0:
+                    print(f"Estimated time left: {hours} hr {minutes} min {seconds} sec")
+                else:
+                    print(f"Estimated time left: {minutes} min {seconds} sec")
+                print(f"Estimated end time: {est_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            else:
+                print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | MCS: {mcs} | Gain: {gain} dB | CFreq: {cFreq/1e6:.1f} MHz")
+                print("Estimating time after first run...")
 
-                    # Print current settings
-                    print(f"Current config: MCS={mcs}, PRF={radarData['prf']}, Gain={radarData['gain']}, PW={radarData['PW']*1e6:.2f}µs")
+            # Print current settings
+            print(f"Current config: MCS={mcs}, PRF={radarData['prf']}, Gain={radarData['gain']}, CFreq={radarData['cFreq']/1e6:.1f} MHz, PW={radarData['PW']*1e6:.2f}µs")
 
-                    # Start the run and time it
-                    start_time = time.time()
-                    runLoop1(UE, radarData, cfg, run_log_dir)
-                    duration = time.time() - start_time
-                    run_durations.append(duration)
+            # Start the run and time it
+            start_time = time.time()
+            runLoop1(UE, radarData, cfg, run_log_dir)
+            duration = time.time() - start_time
+            run_durations.append(duration)
 
-                    if stop_requested:
-                        print("Keyboard interrupt received. Exiting after current runLoop1.")
-                        return
+            if stop_requested:
+                print("Keyboard interrupt received. Exiting after current runLoop1.")
+                return
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Will exit after the current runLoop1 finishes.")
         stop_requested = True
