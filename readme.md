@@ -188,3 +188,7 @@ Threshold 1800: 597 rows (5.17%) above
 PDCCH Interference:
 <img width="696" height="784" alt="image" src="https://github.com/user-attachments/assets/a4d1e9ec-eec9-41a8-ac9d-bbda0d8bb4e0" />
 
+
+maxThroughput DL/UL
+<img width="843" height="453" alt="image" src="https://github.com/user-attachments/assets/fe9234be-a7ee-4702-b12b-028c0ac9f20f" />
+
