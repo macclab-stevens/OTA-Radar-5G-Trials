@@ -3,6 +3,7 @@ import uhd
 import numpy as np
 import scipy.signal
 import argparse
+import time
 
 PLATFORM = "b200"
 SERIAL = "31577FF"
@@ -105,11 +106,112 @@ def main():
     print(f"Total waveform duration (s): {len(waveform) / sample_rate}")
     print(f"Total waveform samples: {len(waveform)}")
 
-    # Transmit
-    usrp.set_tx_bandwidth(f1, 0)
+    # Configure USRP
+    usrp.set_tx_bandwidth(bw * 1.2, 0)
     usrp.set_clock_source("external")
-    usrp.send_waveform(waveform, len(waveform) / sample_rate, center_freq, sample_rate, [0], gain)
-    print("Transmission complete!")
+    usrp.set_tx_rate(sample_rate, 0)
+    usrp.set_tx_freq(uhd.libpyuhd.types.tune_request(center_freq), 0)
+    usrp.set_tx_gain(gain, 0)
+
+    # Verify actual vs requested sample rate
+    actual_rate = usrp.get_tx_rate()
+    rate_error = abs(actual_rate - sample_rate) / sample_rate * 100
+    print(f"\n=== Sample Rate Health ===")
+    print(f"Requested sample rate: {sample_rate / 1e6:.3f} MHz")
+    print(f"Actual sample rate:    {actual_rate / 1e6:.3f} MHz")
+    print(f"Rate error:            {rate_error:.4f}%")
+    if rate_error > 0.01:
+        print("WARNING: Sample rate mismatch > 0.01% — check clock source")
+
+    # Set up TX streamer
+    st_args = uhd.usrp.StreamArgs("fc32", "sc16")
+    st_args.channels = [0]
+    tx_streamer = usrp.get_tx_stream(st_args)
+    max_samps_per_buf = tx_streamer.get_max_num_samps()
+
+    # TX metadata for first packet (timed burst)
+    tx_md = uhd.types.TXMetadata()
+    tx_md.has_time_spec = True
+    tx_md.time_spec = usrp.get_time_now() + uhd.types.TimeSpec(0.2)
+    tx_md.start_of_burst = True
+    tx_md.end_of_burst = False
+
+    # Transmit waveform in chunks
+    total_sent = 0
+    send_errors = 0
+    print(f"\n=== Transmitting ({len(waveform)} samples) ===")
+    tx_start_time = time.time()
+
+    while total_sent < len(waveform):
+        remaining = len(waveform) - total_sent
+        chunk_size = min(remaining, max_samps_per_buf)
+        chunk = waveform[total_sent:total_sent + chunk_size]
+
+        # Mark end of burst on last chunk
+        if total_sent + chunk_size >= len(waveform):
+            tx_md.end_of_burst = True
+
+        num_sent = tx_streamer.send(chunk, tx_md)
+        if num_sent != len(chunk):
+            send_errors += 1
+            print(f"  WARNING: Sent {num_sent}/{len(chunk)} samples at offset {total_sent}")
+
+        total_sent += num_sent
+
+        # After first packet, clear time spec
+        tx_md.has_time_spec = False
+        tx_md.start_of_burst = False
+
+    tx_elapsed = time.time() - tx_start_time
+
+    # === UHD Async Metadata Validation (EVENT_CODE_BURST_ACK) ===
+    print(f"\n=== TX Validation ===")
+    print(f"Samples sent:    {total_sent} / {len(waveform)}")
+    print(f"Send errors:     {send_errors}")
+    print(f"TX elapsed time: {tx_elapsed:.3f}s")
+
+    async_md = uhd.types.TXAsyncMetadata()
+    burst_ack_received = False
+    timeout = 2.0
+    got_msg = tx_streamer.recv_async_msg(async_md, timeout)
+
+    event_codes = uhd.libpyuhd.types.tx_metadata_event_code
+    if got_msg:
+        event = async_md.event_code
+        if event == event_codes.burst_ack:
+            burst_ack_received = True
+            print("BURST_ACK received — burst was transmitted successfully")
+        elif event == event_codes.underflow:
+            print("WARNING: UNDERFLOW — host did not stream data fast enough")
+        elif event == event_codes.seq_error:
+            print("WARNING: SEQ_ERROR — packet loss between host and device")
+        elif event == event_codes.time_error:
+            print("WARNING: TIME_ERROR — packet had time that was late")
+        elif event == event_codes.underflow_in_packet:
+            print("WARNING: UNDERFLOW_IN_PACKET — underflow mid-packet")
+        elif event == event_codes.seq_error_in_packet:
+            print("WARNING: SEQ_ERROR_IN_PACKET — sequence error within burst")
+        else:
+            print(f"WARNING: Unexpected async event code: {event}")
+    else:
+        print("WARNING: No async message received within timeout — could not confirm TX")
+
+    # === Buffer Health Summary ===
+    expected_duration = len(waveform) / sample_rate
+    throughput = total_sent / tx_elapsed if tx_elapsed > 0 else 0
+    print(f"\n=== Buffer Health ===")
+    print(f"Expected waveform duration: {expected_duration:.3f}s")
+    print(f"Host TX throughput:         {throughput / 1e6:.3f} Msps")
+    print(f"Required throughput:        {sample_rate / 1e6:.3f} Msps")
+    if throughput < sample_rate * 0.95:
+        print("WARNING: Host throughput below 95% of sample rate — risk of underflows")
+    else:
+        print("Host throughput OK")
+
+    if burst_ack_received and send_errors == 0:
+        print("\n=== TX RESULT: SUCCESS ===")
+    else:
+        print("\n=== TX RESULT: CHECK WARNINGS ABOVE ===")
 
 if __name__ == "__main__":
     main()

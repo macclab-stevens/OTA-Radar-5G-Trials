@@ -10,23 +10,21 @@ import numpy as np
 from android_controller import AndroidController
 import time
 import argparse
+import random
 
 #Files
 gnbConfigDFLT ="/home/eric/srsRAN_Project/configs/00101__gnb_rf_b200_tdd_n78_20mhz.yml"
 gnbConfigRadar ="/home/eric/srsRAN_Project/configs/radar_00101__gnb_rf_b200_tdd_n78_20mhz.yml"
 
 
-#ADB Commands
-apEnable = 'adb shell cmd connectivity airplane-mode enable' #enable AP Mode. Make UE go IDLE
-apDisable = 'adb shell cmd connectivity airplane-mode disable' #disable AP Mode. Make UE Connect!
-
-#Bash Commands 
+#Bash Commands
 # export GNB_CONFIG_PATH_DEFAULT="/home/eric/srsRAN_Project/configs/00101__gnb_rf_b200_tdd_n78_20mhz.yml"
 # export GNB_CONFIG_PATH_RADAR="/home/eric/srsRAN_Project/configs/radar_00101__gnb_rf_b200_tdd_n78_20mhz.yml"
 gnbStart = 'sudo systemctl start gnb.service'
 gnbStat = 'sudo systemctl status gnb.service'
 gnbStop = 'sudo systemctl stop gnb.service'
-iperfStart = 'iperf3 -p 5201 -c 10.45.0.2 -b 70M -t 0 --logfile /tmp/iperf3.log &'
+iperfStartUL = 'iperf3 -p 5202 -c 10.45.0.2 -b 20M -t 0 -u -R --logfile /tmp/iperf3_UL.log &'
+iperfStartDL = 'iperf3 -p 5201 -c 10.45.0.2 -b 66M -u -t 0 --logfile /tmp/iperf3_DL.log &'
 iperfStop = 'pkill -f iperf3'
 
 #set Default Radar Params
@@ -34,14 +32,12 @@ radarData = {
         "prf": 100,  # Initial PRF value
         "gain": 80,
         "cFreq": 3417.1e6,
-        "PW": 20e-6,
+        "PW": 100e-6,
         "T": 20,
         "bw": 2e6,
         "sampRate": 20e6
     }
 
-# Add this flag near the top of your script
-collectingGNBLogs = True  # Set to True to enable log collection and processing
 
 def check_ping(host, count=1, timeout=1):
     try:
@@ -75,81 +71,49 @@ def bashCMD(CMD):
 def radarStart(cmd):
     try:
         print(f"Running radar command: {cmd}")
-        result = subprocess.run(cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output = result.stdout.decode('utf-8')
-        error = result.stderr.decode('utf-8')
+        process = subprocess.Popen(
+            cmd, shell=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, bufsize=1
+        )
+        output_lines = []
+        # Stream stdout live while capturing for validation parsing
+        for line in process.stdout:
+            line = line.rstrip('\n')
+            print(f"  [RADAR] {line}")
+            output_lines.append(line)
+        # Wait for process to finish and capture stderr
+        process.wait()
+        error = process.stderr.read()
         if error:
-            # Check for specific error
+            for err_line in error.strip().split('\n'):
+                print(f"  [RADAR-ERR] {err_line}")
             if "usb tx2 transfer status: LIBUSB_TRANSFER_NO_DEVICE" in error:
                 print("USB device disconnected error detected!")
-                # Handle accordingly, e.g., raise a custom exception or return a special value
                 raise RuntimeError("USB device disconnected")
-        return output
-    except subprocess.CalledProcessError as e:
-        error = e.stderr.decode('utf-8') if e.stderr else str(e)
-        if "usb tx2 transfer status: LIBUSB_TRANSFER_NO_DEVICE" in error:
-            print("USB device disconnected error detected!")
-            raise RuntimeError("USB device disconnected")
-        else:
-            raise RuntimeError(f"Command failed: {e.cmd}\nError: {error}")
+        if process.returncode != 0:
+            raise RuntimeError(f"Command failed (exit code {process.returncode}): {cmd}\nError: {error}")
+        return '\n'.join(output_lines)
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"Command failed: {cmd}\nError: {e}")
 def adbCMD(CMD):
     process = subprocess.Popen(CMD.split(), stdout=subprocess.PIPE)
     output, error = process.communicate()
     print(output)
 
-def collectLogs(radarData, iperfStart_T, folder):
+def ProcessGnbLogs(radarData, iperfStart_T, folder, LogNametimestamp):
     """
-    Collect raw logs and save them to a timestamped subfolder.
-    """
-    LogNametimestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # Create a timestamped subdirectory for this iteration
-    iteration_folder = os.path.join(folder, LogNametimestamp)
-    os.makedirs(iteration_folder, exist_ok=True)
-    
-    # Fix permissions so non-root processes can write
-    try:
-        subprocess.run(['chmod', '777', iteration_folder], check=True)
-    except Exception as e:
-        print(f"Warning: Could not set permissions on {iteration_folder}: {e}")
-    
-    iperf_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_iperf3.log")
-    gnb_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_gnb.log")
-    
-    try:
-        shutil.copy("/tmp/iperf3.log", iperf_dst)
-        print(f"Saved /tmp/iperf3.log as {iperf_dst}")
-        os.remove("/tmp/iperf3.log")
-    except Exception as e:
-        print(f"Could not copy /tmp/iperf3.log: {e}")
-    try:
-        shutil.copy("/tmp/gnb.log", gnb_dst)
-        print(f"Saved /tmp/gnb.log as {gnb_dst}")
-    except Exception as e:
-        print(f"Could not copy /tmp/gnb.log: {e}")
+    Collect logs, append radar info, and process gnb.log to generate CSVs.
+    Creates a single timestamped subfolder for each iteration's logs.
 
-    # Append radarData as CSV line to gnb_dst
-    try:
-        with open(gnb_dst, "a") as f:
-            csv_line = "Radar_Char," + ",".join(f"{k}={radarData[k]}" for k in radarData.keys()) + "\n"
-            f.write(csv_line)
-            f.write(iperfStart + "\n") #write the iperf command used
-    except Exception as e:
-        print(f"Could not append radarData to {gnb_dst}: {e}")
-    try: 
-        with open(iperf_dst, "a") as f:
-            csv_line = f"RadarStartTime,{iperfStart_T}\n"
-            f.write(csv_line)
-    except Exception as e:
-        print(f"Could not append radarData to {iperf_dst}: {e}")
-
-def ProcessGnbLogs(radarData, iperfStart_T, folder):
+    Args:
+        radarData: dict of radar parameters
+        iperfStart_T: timestamp when iperf started
+        folder: base run directory (e.g., .../run1)
+        LogNametimestamp: pre-generated timestamp string (YYYYMMDD_HHMMSS)
     """
-    appends radar info, and processes gnb.log to generate CSVs.
-    Creates a timestamped subfolder for each iteration's logs.
-    """
-    LogNametimestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    iperf_src = "/tmp/iperf3.log"
     gnb_src = "/tmp/gnb.log"
     
     # Create a timestamped subdirectory for this iteration
@@ -163,20 +127,49 @@ def ProcessGnbLogs(radarData, iperfStart_T, folder):
         print(f"Warning: Could not set permissions on {iteration_folder}: {e}")
     
     # Create destination paths in the timestamped folder
-    iperf_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_iperf3.log")
+    iperf_ul_src = "/tmp/iperf3_UL.log"
+    iperf_dl_src = "/tmp/iperf3_DL.log"
+    radar_tx_src = "/tmp/radar_tx.log"
+    iperf_ul_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_iperf3_UL.log")
+    iperf_dl_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_iperf3_DL.log")
+    radar_tx_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_radar_tx.log")
     gnb_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_gnb.log")
     
     # gnb writes its logs directly to /tmp/gnb.log (configured in the gnb yaml)
     # No need to extract from journalctl - just use the existing file
     print("Using gNB logs from /tmp/gnb.log (written directly by gnb)")
     
-    # Copy logs to destination folder FIRST
-    try:
-        shutil.copy(iperf_src, iperf_dst)
-        print(f"Saved {iperf_src} as {iperf_dst}")
-    except Exception as e:
-        print(f"Could not copy {iperf_src}: {e}")
-        
+    # Copy logs to destination folder, then clean up source files
+    if os.path.exists(iperf_ul_src):
+        try:
+            shutil.copy(iperf_ul_src, iperf_ul_dst)
+            print(f"Saved {iperf_ul_src} as {iperf_ul_dst}")
+            os.remove(iperf_ul_src)
+        except Exception as e:
+            print(f"Could not copy {iperf_ul_src}: {e}")
+    else:
+        print(f"Note: {iperf_ul_src} not found (may not be flushed yet)")
+
+    if os.path.exists(iperf_dl_src):
+        try:
+            shutil.copy(iperf_dl_src, iperf_dl_dst)
+            print(f"Saved {iperf_dl_src} as {iperf_dl_dst}")
+            os.remove(iperf_dl_src)
+        except Exception as e:
+            print(f"Could not copy {iperf_dl_src}: {e}")
+    else:
+        print(f"Note: {iperf_dl_src} not found (may not be flushed yet)")
+
+    if os.path.exists(radar_tx_src):
+        try:
+            shutil.copy(radar_tx_src, radar_tx_dst)
+            print(f"Saved {radar_tx_src} as {radar_tx_dst}")
+            os.remove(radar_tx_src)
+        except Exception as e:
+            print(f"Could not copy {radar_tx_src}: {e}")
+    else:
+        print(f"Note: {radar_tx_src} not found (radar may not have run)")
+
     try:
         shutil.copy(gnb_src, gnb_dst)
         print(f"Saved {gnb_src} as {gnb_dst}")
@@ -189,18 +182,29 @@ def ProcessGnbLogs(radarData, iperfStart_T, folder):
         with open(gnb_dst, "a") as f:
             csv_line = "Radar_Char," + ",".join(f"{k}={radarData[k]}" for k in radarData.keys()) + "\n"
             f.write(csv_line)
-            f.write(iperfStart + "\n")
+            f.write("UL: " + iperfStartUL + "\n")
+            f.write("DL: " + iperfStartDL + "\n")
         print(f"Appended radar data to {gnb_dst}")
     except Exception as e:
         print(f"Could not append radarData to {gnb_dst}: {e}")
         
     try: 
-        with open(iperf_dst, "a") as f:
-            csv_line = f"RadarStartTime,{iperfStart_T}\n"
-            f.write(csv_line)
-        print(f"Appended radar start time to {iperf_dst}")
+        if os.path.exists(iperf_ul_dst):
+            with open(iperf_ul_dst, "a") as f:
+                csv_line = f"RadarStartTime,{iperfStart_T}\n"
+                f.write(csv_line)
+            print(f"Appended radar start time to {iperf_ul_dst}")
     except Exception as e:
-        print(f"Could not append radarData to {iperf_dst}: {e}")
+        print(f"Could not append radarData to {iperf_ul_dst}: {e}")
+    
+    try: 
+        if os.path.exists(iperf_dl_dst):
+            with open(iperf_dl_dst, "a") as f:
+                csv_line = f"RadarStartTime,{iperfStart_T}\n"
+                f.write(csv_line)
+            print(f"Appended radar start time to {iperf_dl_dst}")
+    except Exception as e:
+        print(f"Could not append radarData to {iperf_dl_dst}: {e}")
     
     # Process the COPIED log files (now in the timestamped folder)
     # Note: LogProcessing.py expects [METRICS ] tags which may not be present in journalctl output
@@ -211,7 +215,7 @@ def ProcessGnbLogs(radarData, iperfStart_T, folder):
             "python3",
             "/home/eric/OTA-Radar-5G-Trials/LogProcessing.py",
             "--gnb-log", gnb_dst,       # Use copied file
-            "--iperf-log", iperf_dst,   # Use copied file
+            "--iperf-log", iperf_ul_dst if os.path.exists(iperf_ul_dst) else gnb_dst,   # Use UL if exists, else gnb
             "--out-dir", iteration_folder,  # Output to timestamped folder
             "--prefix", prefix
         ]
@@ -342,6 +346,43 @@ def reset_usrp_usb():
         print(f"Failed to reset USRP USB device: {e}")
 
 
+def validate_radar_output(output):
+    """Parse radarTX.py output to validate transmission."""
+    result = {
+        "burst_ack": False,
+        "underflow": False,
+        "seq_error": False,
+        "time_error": False,
+        "send_errors": 0,
+        "rate_error_pct": None,
+        "throughput_ok": False,
+        "success": False,
+    }
+    for line in output.splitlines():
+        if "BURST_ACK received" in line:
+            result["burst_ack"] = True
+        elif "UNDERFLOW" in line:
+            result["underflow"] = True
+        elif "SEQ_ERROR" in line:
+            result["seq_error"] = True
+        elif "TIME_ERROR" in line:
+            result["time_error"] = True
+        elif "Send errors:" in line:
+            try:
+                result["send_errors"] = int(line.strip().split()[-1])
+            except ValueError:
+                pass
+        elif "Rate error:" in line:
+            try:
+                result["rate_error_pct"] = float(line.strip().split()[-1].replace('%', ''))
+            except ValueError:
+                pass
+        elif "Host throughput OK" in line:
+            result["throughput_ok"] = True
+        elif "TX RESULT: SUCCESS" in line:
+            result["success"] = True
+    return result
+
 def runLoop1(UE, radarValues, gnbConfig, logDIR):
     print("Running Loop 1")
     try:
@@ -359,15 +400,23 @@ def runLoop1(UE, radarValues, gnbConfig, logDIR):
     print("UE attached to network. Starting iperf3 on UE...")
     UE.restart_termux_iperf3()
     sleep(1)
-    print("Starting iperf3 client...")
+    print("Starting iperf3 UL and DL clients...")
     try:
-        bashCMDbckGrnd(iperfStart)
+        bashCMDbckGrnd(iperfStartDL)
+        sleep(0.5)
+        bashCMDbckGrnd(iperfStartUL)
+
     except RuntimeError as e:
         print(f"Failed to start iperf3: {e}")
         return False
     iperf_timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")
+    print("Waiting 5s for iperf3 UL/DL to stabilize...")
     sleep(5)
-    radarExeString = f'''./radarTX.py \
+    # Random 0-1s jitter before radar pulse to decorrelate timing
+    radar_jitter = random.uniform(0, 1)
+    print(f"Radar start jitter: {radar_jitter:.3f}s")
+    sleep(radar_jitter)
+    radarExeString = f'''python3 radarTX.py \
         --center-freq {radarValues['cFreq']}  \
         --prf {radarValues['prf']} \
         --pulse-width {radarValues['PW']} \
@@ -376,7 +425,24 @@ def runLoop1(UE, radarValues, gnbConfig, logDIR):
         --bw {radarValues['bw']} \
         --sample-rate {radarValues['sampRate']}'''
     try:
-        radarStart(radarExeString)
+        radar_output = radarStart(radarExeString)
+        # Validate radar TX using async metadata and buffer health
+        radar_result = validate_radar_output(radar_output)
+        print(f"\n=== Radar TX Validation ===")
+        print(f"  BURST_ACK:     {'YES' if radar_result['burst_ack'] else 'NO'}")
+        print(f"  Underflows:    {'YES — WARNING' if radar_result['underflow'] else 'None'}")
+        print(f"  Seq errors:    {'YES — WARNING' if radar_result['seq_error'] else 'None'}")
+        print(f"  Time errors:   {'YES — WARNING' if radar_result['time_error'] else 'None'}")
+        print(f"  Send errors:   {radar_result['send_errors']}")
+        if radar_result['rate_error_pct'] is not None:
+            print(f"  Rate error:    {radar_result['rate_error_pct']:.4f}%")
+        print(f"  Throughput OK: {'YES' if radar_result['throughput_ok'] else 'NO'}")
+        print(f"  Overall:       {'SUCCESS' if radar_result['success'] else 'CHECK WARNINGS'}")
+        if not radar_result['burst_ack']:
+            print("  WARNING: No BURST_ACK — radar transmission may not have completed!")
+        # Save radar log to temp for ProcessGnbLogs to pick up
+        with open("/tmp/radar_tx.log", "w") as f:
+            f.write(radar_output)
     except RuntimeError as e:
         print(f"Radar command failed: {e}")
         reset_usrp_usb() #handle USB disconnect specifically here
@@ -391,9 +457,8 @@ def runLoop1(UE, radarValues, gnbConfig, logDIR):
     print("Stopping gNB...")
     bashCMD(gnbStop)
     print("Collecting logs...")
-    if collectingGNBLogs:
-        collectLogs(radarValues, iperf_timestamp, logDIR)
-    ProcessGnbLogs(radarValues, iperf_timestamp, logDIR)
+    log_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ProcessGnbLogs(radarValues, iperf_timestamp, logDIR, log_timestamp)
     sleep(1)
     return True
 
@@ -448,16 +513,21 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='OTA Experiment Control Script')
     parser.add_argument('-f', '--folder', type=str, required=True,
-                        help='Folder name for saving results')
+                        help='Folder name (relative to ~/OTA-Experiment-Runs) or absolute path')
+    parser.add_argument('-n', '--n-repeats', type=int, default=1000,
+                        help='Number of repeats per configuration (default: 1000)')
+    parser.add_argument('--harq-analysis', action='store_true', default=False,
+                        help='Run batch HARQ analysis on saved gNB logs after all runs complete')
     args = parser.parse_args()
-    
-    # Setup base experiment directory
-    base_dir = "/home/eric/OTA-Experiment-Runs"
-    os.makedirs(base_dir, exist_ok=True)
-    
-    # Use user-specified folder name
-    experiment_dir = os.path.join(base_dir, args.folder)
-    
+
+    # Setup experiment directory — absolute path used directly, relative joined with base
+    if os.path.isabs(args.folder):
+        experiment_dir = args.folder
+    else:
+        base_dir = "/home/eric/OTA-Experiment-Runs"
+        os.makedirs(base_dir, exist_ok=True)
+        experiment_dir = os.path.join(base_dir, args.folder)
+
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"Experiment directory: {experiment_dir}")
     
@@ -472,7 +542,7 @@ def main():
     mcs_values = [27]  # Only MCS 27
     # gain_values = list(range(20, 51, 2))  # Radar gain from 20 to 50 (step 2)
     # cFreq_values = [round(3417.1e6 + i * 0.2e6, 1) for i in range(int((3423 - 3417.1) / 0.2) + 1)]  # Center freq from 3417.1 to 3423 MHz (step 0.2 MHz)
-    n_repeats = 1000  # Number of times to repeat each MCS value
+    n_repeats = args.n_repeats
     total_runs = len(mcs_values) * n_repeats
     iteration_count = 0
     run_durations = []
@@ -546,6 +616,23 @@ def main():
         print("\nKeyboard interrupt detected. Will exit after the current runLoop1 finishes.")
         stop_requested = True
         # The loop will check stop_requested after the current runLoop1 and exit.
+
+    # Run batch HARQ analysis on all saved logs
+    if args.harq_analysis:
+        print(f"\n{'='*70}")
+        print(f"Running batch HARQ analysis on {experiment_dir}...")
+        print(f"{'='*70}")
+        try:
+            harq_cmd = [
+                "python3",
+                "/home/eric/OTA-Radar-5G-Trials/analyze_harq.py",
+                "--batch", experiment_dir
+            ]
+            result = subprocess.run(harq_cmd, text=True)
+            if result.returncode != 0:
+                print(f"HARQ analysis exited with code {result.returncode}")
+        except Exception as e:
+            print(f"Failed to run HARQ analysis: {e}")
 
 if __name__ == "__main__":
     main()
