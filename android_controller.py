@@ -53,29 +53,46 @@ class AndroidController:
         else:
             return False
     def stop_termux_iperf3(self):
-        self.ensure_screen_on()
-        print("Stopping iperf3...")
-        # use pkill command
-        self.run_adb_command("shell input text 'pkill%siperf3'") #%s is required space
-        self.run_adb_command("shell input keyevent 66") #Press Enter key
-        sleep(0.5)  # Give it a moment to process
+        print("Stopping iperf3 on UE...")
+        # Send SIGTERM directly via adb shell — no Termux UI interaction needed
+        self.run_adb_command("shell pkill iperf3")
+        sleep(0.5)
         pid = self.run_adb_command("shell pgrep iperf3")
         if not pid:
             print("iperf3 stopped successfully.")
             return True
-        else:
-            print(f"Failed to stop iperf3. PID still exists: {pid}")
-            return False
+        # Still running — force kill with SIGKILL
+        print(f"iperf3 still running (PIDs: {pid.replace(chr(10), ' ')}), sending SIGKILL...")
+        self.run_adb_command("shell pkill -9 iperf3")
+        sleep(0.3)
+        pid = self.run_adb_command("shell pgrep iperf3")
+        if not pid:
+            print("iperf3 force-killed successfully.")
+            return True
+        print(f"Failed to stop iperf3. PID still exists: {pid.replace(chr(10), ' ')}")
+        return False
     
     def restart_termux_iperf3(self):
         self.ensure_screen_on()
-        # start iperf3 in termux
-        if self.stop_termux_iperf3():
-            print("Starting iperf3 in Termux...")
-            self.run_adb_command("shell input text '/data/data/com.termux/files/home/iperf3.18%s-s%s-p%s5201%s-D' ") #%s is required space
-            self.run_adb_command("shell input keyevent 66") #Press Enter key
-            self.run_adb_command("shell input text '/data/data/com.termux/files/home/iperf3.18%s-s%s-p%s5202%s-D' ") #%s is required space
-            self.run_adb_command("shell input keyevent 66") #Press Enter key
+        # Force-kill any existing iperf3 first (ignore return value)
+        self.stop_termux_iperf3()
+        sleep(0.3)
+
+        # Start both servers directly via adb shell — no Termux UI needed
+        iperf3   = "/data/data/com.termux/files/home/iperf3.18"
+        lib_path = "/data/data/com.termux/files/usr/lib"
+        print("Starting iperf3 servers on UE (ports 5201 + 5202)...")
+        self.run_adb_command(f"shell 'LD_LIBRARY_PATH={lib_path} nohup {iperf3} -s -p 5201 > /dev/null 2>&1 &'")
+        self.run_adb_command(f"shell 'LD_LIBRARY_PATH={lib_path} nohup {iperf3} -s -p 5202 > /dev/null 2>&1 &'")
+        sleep(1)
+
+        # Verify both started
+        pids = self.run_adb_command("shell pgrep -f iperf3")
+        n = len(pids.strip().splitlines()) if pids.strip() else 0
+        if n >= 2:
+            print(f"iperf3 servers started ({n} processes running)")
+        else:
+            print(f"WARNING: expected 2 iperf3 processes, found {n}. PIDs: {pids.strip()}")
 
 def main():
     parser = argparse.ArgumentParser(

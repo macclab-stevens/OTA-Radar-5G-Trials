@@ -23,14 +23,14 @@ gnbConfigRadar ="/home/eric/srsRAN_Project/configs/radar_00101__gnb_rf_b200_tdd_
 gnbStart = 'sudo systemctl start gnb.service'
 gnbStat = 'sudo systemctl status gnb.service'
 gnbStop = 'sudo systemctl stop gnb.service'
-iperfStartUL = 'iperf3 -p 5202 -c 10.45.0.2 -b 20M -t 0 -u -R --logfile /tmp/iperf3_UL.log &'
-iperfStartDL = 'iperf3 -p 5201 -c 10.45.0.2 -b 66M -u -t 0 --logfile /tmp/iperf3_DL.log &'
-iperfStop = 'pkill -f iperf3'
+iperfStartUL = 'iperf3 -p 5202 -c 10.45.0.2 -b 12M -t 0 -u -R --logfile /tmp/iperf3_UL.log &'
+iperfStartDL = 'iperf3 -p 5201 -c 10.45.0.2 -b 68M -u -t 0 --logfile /tmp/iperf3_DL.log &'
+iperfStop = 'pkill iperf3'
 
 #set Default Radar Params
 radarData = {
         "prf": 100,  # Initial PRF value
-        "gain": 80,
+        "gain": 70,
         "cFreq": 3417.1e6,
         "PW": 100e-6,
         "T": 20,
@@ -103,7 +103,8 @@ def adbCMD(CMD):
     output, error = process.communicate()
     print(output)
 
-def ProcessGnbLogs(radarData, iperfStart_T, folder, LogNametimestamp):
+def ProcessGnbLogs(radarData, iperfStart_T, folder, LogNametimestamp,
+                   radar_start_T=None, radar_end_T=None, gnb_start_T=None):
     """
     Collect logs, append radar info, and process gnb.log to generate CSVs.
     Creates a single timestamped subfolder for each iteration's logs.
@@ -113,6 +114,9 @@ def ProcessGnbLogs(radarData, iperfStart_T, folder, LogNametimestamp):
         iperfStart_T: timestamp when iperf started
         folder: base run directory (e.g., .../run1)
         LogNametimestamp: pre-generated timestamp string (YYYYMMDD_HHMMSS)
+        radar_start_T: timestamp when radar TX started (optional)
+        radar_end_T: timestamp when radar TX finished (optional)
+        gnb_start_T: datetime string when gnb was started, used to slice journalctl (optional)
     """
     gnb_src = "/tmp/gnb.log"
     
@@ -130,9 +134,11 @@ def ProcessGnbLogs(radarData, iperfStart_T, folder, LogNametimestamp):
     iperf_ul_src = "/tmp/iperf3_UL.log"
     iperf_dl_src = "/tmp/iperf3_DL.log"
     radar_tx_src = "/tmp/radar_tx.log"
+    terminal_log_src = "/tmp/terminal.log"
     iperf_ul_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_iperf3_UL.log")
     iperf_dl_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_iperf3_DL.log")
     radar_tx_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_radar_tx.log")
+    terminal_log_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_terminal.log")
     gnb_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_gnb.log")
     
     # gnb writes its logs directly to /tmp/gnb.log (configured in the gnb yaml)
@@ -170,6 +176,28 @@ def ProcessGnbLogs(radarData, iperfStart_T, folder, LogNametimestamp):
     else:
         print(f"Note: {radar_tx_src} not found (radar may not have run)")
 
+    if os.path.exists(terminal_log_src):
+        try:
+            shutil.copy(terminal_log_src, terminal_log_dst)
+            print(f"Saved {terminal_log_src} as {terminal_log_dst}")
+        except Exception as e:
+            print(f"Could not copy {terminal_log_src}: {e}")
+
+    # Save journalctl gnb.service log for this run
+    journal_dst = os.path.join(iteration_folder, f"{LogNametimestamp}_gnb_journal.log")
+    try:
+        jctl_cmd = ["sudo", "journalctl", "-u", "gnb.service", "--no-pager", "--output=short-iso"]
+        if gnb_start_T:
+            # journalctl --since expects "YYYY-MM-DD HH:MM:SS"
+            since_str = gnb_start_T.replace("T", " ").split(".")[0]
+            jctl_cmd += ["--since", since_str]
+        result = subprocess.run(jctl_cmd, capture_output=True, text=True, timeout=15)
+        with open(journal_dst, "w") as f:
+            f.write(result.stdout)
+        print(f"Saved journalctl gnb.service as {journal_dst}")
+    except Exception as e:
+        print(f"Could not save journalctl log: {e}")
+
     try:
         shutil.copy(gnb_src, gnb_dst)
         print(f"Saved {gnb_src} as {gnb_dst}")
@@ -182,22 +210,16 @@ def ProcessGnbLogs(radarData, iperfStart_T, folder, LogNametimestamp):
         with open(gnb_dst, "a") as f:
             csv_line = "Radar_Char," + ",".join(f"{k}={radarData[k]}" for k in radarData.keys()) + "\n"
             f.write(csv_line)
-            f.write("UL: " + iperfStartUL + "\n")
             f.write("DL: " + iperfStartDL + "\n")
+            if radar_start_T:
+                f.write(f"RadarTxStart,{radar_start_T}\n")
+            if radar_end_T:
+                f.write(f"RadarTxEnd,{radar_end_T}\n")
         print(f"Appended radar data to {gnb_dst}")
     except Exception as e:
         print(f"Could not append radarData to {gnb_dst}: {e}")
         
-    try: 
-        if os.path.exists(iperf_ul_dst):
-            with open(iperf_ul_dst, "a") as f:
-                csv_line = f"RadarStartTime,{iperfStart_T}\n"
-                f.write(csv_line)
-            print(f"Appended radar start time to {iperf_ul_dst}")
-    except Exception as e:
-        print(f"Could not append radarData to {iperf_ul_dst}: {e}")
-    
-    try: 
+    try:
         if os.path.exists(iperf_dl_dst):
             with open(iperf_dl_dst, "a") as f:
                 csv_line = f"RadarStartTime,{iperfStart_T}\n"
@@ -215,7 +237,7 @@ def ProcessGnbLogs(radarData, iperfStart_T, folder, LogNametimestamp):
             "python3",
             "/home/eric/OTA-Radar-5G-Trials/LogProcessing.py",
             "--gnb-log", gnb_dst,       # Use copied file
-            "--iperf-log", iperf_ul_dst if os.path.exists(iperf_ul_dst) else gnb_dst,   # Use UL if exists, else gnb
+            "--iperf-log", iperf_dl_dst if os.path.exists(iperf_dl_dst) else gnb_dst,
             "--out-dir", iteration_folder,  # Output to timestamped folder
             "--prefix", prefix
         ]
@@ -246,51 +268,59 @@ def readGnbConfig(config_path):
 def update_yaml_parameter(yaml_path, param_path, value):
     """
     Update a parameter in a YAML file by modifying the line directly.
-    This preserves comments and formatting.
-    
-    Args:
-        yaml_path: Path to the YAML file
-        param_path: Dot-separated path to the parameter (e.g., "cell_cfg.pdsch.min_ue_mcs")
-        value: New value to set
-    
+    Uses the dot-separated param_path to locate the correct section first,
+    so duplicate parameter names in different sections (e.g. pusch vs pdsch)
+    are handled correctly.
+
     Example:
         update_yaml_parameter(gnbConfigRadar, "cell_cfg.pdsch.min_ue_mcs", 15)
     """
-    # Get the final parameter name
-    param_name = param_path.split('.')[-1]
-    
-    # Read the file
+    parts = param_path.split('.')
+    param_name = parts[-1]
+    parent_section = parts[-2] if len(parts) >= 2 else None
+
     with open(yaml_path, 'r') as f:
         lines = f.readlines()
-    
-    # Find and update the parameter line
+
+    in_section = (parent_section is None)
+    parent_indent = None
     modified = False
+
     for i, line in enumerate(lines):
         stripped = line.strip()
-        # Check if this line defines the parameter (not commented, has the parameter name followed by :)
-        if not stripped.startswith('#') and stripped.startswith(f'{param_name}:'):
-            # Get the indentation
-            indent = len(line) - len(line.lstrip())
-            # Find if there's a comment on the line
+        if not stripped or stripped.startswith('#'):
+            continue
+        indent = len(line) - len(line.lstrip())
+
+        if not in_section:
+            # Wait until we find the parent section header
+            if stripped.startswith(f'{parent_section}:'):
+                in_section = True
+                parent_indent = indent
+            continue
+
+        # If we've returned to the same (or shallower) indent as the section
+        # header, we've left the section without finding the param
+        if parent_indent is not None and indent <= parent_indent:
+            break
+
+        if stripped.startswith(f'{param_name}:'):
             if '#' in stripped:
-                # Preserve the comment
                 comment_idx = line.find('#')
                 comment = line[comment_idx:]
                 lines[i] = f"{' ' * indent}{param_name}: {value}  {comment}"
             else:
                 lines[i] = f"{' ' * indent}{param_name}: {value}\n"
             modified = True
-            print(f"Updated {param_name} = {value}")
+            print(f"Updated {param_path} = {value}")
             break
-    
+
     if not modified:
-        print(f"Warning: Parameter {param_name} not found in {yaml_path}")
+        print(f"Warning: {param_path} not found in {yaml_path}")
         return False
-    
-    # Write back to file
+
     with open(yaml_path, 'w') as f:
         f.writelines(lines)
-    
     return True
 
 def uncomment_yaml_line(yaml_path, parameter_name):
@@ -325,23 +355,47 @@ def uncomment_yaml_line(yaml_path, parameter_name):
     else:
         print(f"Parameter {parameter_name} not found or already uncommented in {yaml_path}")
 
-def reset_usrp_usb():
+def _reset_usb_device(lsusb_out, label, pattern):
+    """Find a device matching pattern in lsusb output and reset it via usbreset."""
+    match = re.search(
+        r'Bus (\d{3}) Device (\d{3}): ID ([0-9a-f]{4}:[0-9a-f]{4})' + pattern,
+        lsusb_out, re.IGNORECASE
+    )
+    if not match:
+        print(f"  {label}: not found in lsusb output — skipping")
+        return False
+    bus, device, usb_id = match.group(1), match.group(2), match.group(3)
+    dev_path = f"/dev/bus/usb/{bus}/{device}"
+    print(f"  {label}: Bus {bus} Device {device} ID {usb_id} ({dev_path}) — resetting...")
     try:
-        # Get lsusb output
+        subprocess.run(["sudo", "usbreset", dev_path], check=True)
+        print(f"  {label}: reset OK")
+        return True
+    except Exception as e:
+        print(f"  {label}: reset failed — {e}")
+        return False
+
+
+def reset_usb_devices():
+    """Reset the B200-mini USRP and the Nexus/Pixel phone via usbreset."""
+    print("Resetting USB devices...")
+    try:
         lsusb_out = subprocess.check_output("lsusb", shell=True).decode()
-        # Find Ettus USRP device
-        match = re.search(r'Bus (\d{3}) Device (\d{3}): ID ([0-9a-f]{4}:[0-9a-f]{4}) .*B200-mini', lsusb_out)
-        if match:
-            print(f"Found B200-mini: {match}")
-            bus = match.group(1)
-            device = match.group(2)
-            usb_id = match.group(3)
-            print(f"Found B200-mini: Bus {bus}, Device {device}, ID {usb_id}")
-            usb_path = f"/dev/bus/usb/{bus}/{device}"
-            print(f"Resetting USRP device at {usb_id}")
-            subprocess.run(f"usbreset {usb_id}", shell=True, check=True)
-        else:
-            print("USRP device not found in lsusb output.")
+    except Exception as e:
+        print(f"  lsusb failed: {e}")
+        return
+
+    _reset_usb_device(lsusb_out, "USRP B200-mini",  r'.*B200-mini')
+    _reset_usb_device(lsusb_out, "Nexus/Pixel phone", r'.*(?:Nexus|Pixel|18d1:4ee7)')
+    sleep(2)  # give both devices time to re-enumerate
+
+
+def reset_usrp_usb():
+    """Legacy helper — resets the B200-mini only (called on radar USB disconnect)."""
+    try:
+        lsusb_out = subprocess.check_output("lsusb", shell=True).decode()
+        _reset_usb_device(lsusb_out, "USRP B200-mini", r'.*B200-mini')
+        sleep(2)
     except Exception as e:
         print(f"Failed to reset USRP USB device: {e}")
 
@@ -383,8 +437,281 @@ def validate_radar_output(output):
             result["success"] = True
     return result
 
-def runLoop1(UE, radarValues, gnbConfig, logDIR):
-    print("Running Loop 1")
+def wait_for_iperf_stable(direction="ul", ul_log="/tmp/iperf3_UL.log", dl_log="/tmp/iperf3_DL.log",
+                          min_wait=10, timeout=45):
+    """
+    Wait until the gating iperf3 log(s) show active interval data, then enforce min_wait.
+    direction: 'ul'   — gate on UL only  (DL shown for info)
+               'dl'   — gate on DL only  (UL shown for info)
+               'both' — gate on both UL and DL
+    Returns True if confirmed active, False on timeout.
+    """
+    _rate_pat = re.compile(r'\d+\.\d+-\d+\.\d+\s+sec.*?(\d+\.?\d*)\s+(M|G|K)bits/sec')
+
+    def get_latest_rate(path):
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, 'r') as f:
+                content = f.read()
+        except Exception:
+            return None
+        for line in reversed(content.splitlines()):
+            m = _rate_pat.search(line)
+            if m:
+                val = float(m.group(1))
+                unit = m.group(2)
+                if unit == 'G':
+                    val *= 1000
+                elif unit == 'K':
+                    val /= 1000
+                return val
+        return None
+
+    gate_label = {"ul": "UL", "dl": "DL", "both": "UL+DL"}[direction]
+    print(f"Waiting for iperf3 {gate_label} to stabilize (min {min_wait}s, timeout {timeout}s)...")
+    elapsed = 0
+    ul_ok = dl_ok = False
+
+    while elapsed < timeout:
+        sleep(1)
+        elapsed += 1
+
+        ul_rate = get_latest_rate(ul_log)
+        dl_rate = get_latest_rate(dl_log)
+        ul_ok = ul_rate is not None
+        dl_ok = dl_rate is not None
+
+        ul_str = f"{ul_rate:.1f}M" if ul_ok else '--'
+        dl_str = f"{dl_rate:.1f}M" if dl_ok else '--'
+        status = f"  [{elapsed:>3}s] UL={ul_str}  DL={dl_str}"
+
+        if direction == "ul":
+            gate_ok = ul_ok
+        elif direction == "dl":
+            gate_ok = dl_ok
+        else:  # both
+            gate_ok = ul_ok and dl_ok
+
+        if gate_ok and elapsed >= min_wait:
+            print(status + f"  -> {gate_label} active, proceeding")
+            return True
+        else:
+            print(status)
+
+    print(f"WARNING: iperf3 stabilization timeout after {timeout}s  "
+          f"(UL={'OK' if ul_ok else 'MISSING'}, DL={'OK' if dl_ok else 'MISSING'})")
+    return False
+
+
+# Minimum acceptable throughput thresholds
+IPERF_DL_MIN_MBPS = 60.0   # DL target ~66 Mbps
+IPERF_UL_MIN_MBPS = 10.0   # UL target ~11-12 Mbps
+# gNB METRICS thresholds — low enough to work across all MCS values; just confirms the link is active
+GNB_DL_MIN_MBPS = 1.0
+GNB_UL_MIN_MBPS = 1.0
+
+
+def check_iperf_throughput(log_path, n_intervals=3):
+    """
+    Read the last n_intervals interval lines from an iperf3 log and return
+    the average throughput in Mbps.  Returns None if the log can't be parsed.
+    """
+    import re
+    if not os.path.exists(log_path):
+        return None
+    try:
+        with open(log_path, 'r') as f:
+            lines = f.readlines()
+    except Exception:
+        return None
+
+    # Match interval lines: contain a time range (e.g. "0.00-1.00") and a bitrate
+    pattern = re.compile(r'\d+\.\d+-\d+\.\d+\s+sec.*?(\d+\.?\d*)\s+(M|G|K)bits/sec')
+    rates = []
+    for line in reversed(lines):
+        m = pattern.search(line)
+        if m:
+            val = float(m.group(1))
+            unit = m.group(2)
+            if unit == 'G':
+                val *= 1000
+            elif unit == 'K':
+                val /= 1000
+            rates.append(val)
+            if len(rates) == n_intervals:
+                break
+
+    if not rates:
+        return None
+    return sum(rates) / len(rates)
+
+
+def parse_brate_to_mbps(s):
+    """Convert a gNB brate string (e.g. '66.5Mbps', '2.00kbps', '1.2Gbps') to float Mbps."""
+    m = re.match(r'([\d.]+)\s*(k|M|G)?bps', s, re.IGNORECASE)
+    if not m:
+        return None
+    val = float(m.group(1))
+    unit = (m.group(2) or '').lower()
+    if unit == 'g':
+        val *= 1000
+    elif unit == 'k':
+        val /= 1000
+    return val
+
+
+def read_gnb_metrics(gnb_log="/tmp/gnb.log", n_recent=3):
+    """
+    Extract the last n_recent Scheduler [METRICS ] lines from gnb.log and
+    return (avg_dl_mbps, avg_ul_mbps).  Uses tail+grep because MAC/RRC debug
+    logging is dense enough that a fixed-byte Python seek would miss them.
+    Returns (None, None) if the log is unreadable or has no METRICS yet.
+    """
+    if not os.path.exists(gnb_log):
+        return None, None
+    try:
+        result = subprocess.run(
+            f'tail -c 4194304 {gnb_log} | grep -a "\\[METRICS \\].*total_dl_brate"',
+            shell=True, capture_output=True, text=True, timeout=5
+        )
+        lines = result.stdout.strip().splitlines()
+    except Exception:
+        return None, None
+
+    pat = re.compile(r'\[METRICS \].*?total_dl_brate=\s*(\S+).*?total_ul_brate=\s*(\S+)')
+    dl_rates, ul_rates = [], []
+    for line in reversed(lines):
+        m = pat.search(line)
+        if m:
+            dl = parse_brate_to_mbps(m.group(1))
+            ul = parse_brate_to_mbps(m.group(2))
+            if dl is not None:
+                dl_rates.append(dl)
+            if ul is not None:
+                ul_rates.append(ul)
+            if len(dl_rates) >= n_recent:
+                break
+
+    avg_dl = sum(dl_rates) / len(dl_rates) if dl_rates else None
+    avg_ul = sum(ul_rates) / len(ul_rates) if ul_rates else None
+    return avg_dl, avg_ul
+
+
+def start_iperf_with_gnb_verify(UE, max_restarts=6, settle_secs=10, timeout_per_attempt=45):
+    """
+    Start iperf3 client(s), then verify actual air-interface rates via gNB [METRICS] lines.
+    Kills and restarts iperf3 up to max_restarts times if rates don't meet thresholds.
+
+    Returns the iperf start timestamp (str) on success, or None if all attempts fail.
+    """
+    _rate_pat = re.compile(r'\d+\.\d+-\d+\.\d+\s+sec.*?(\d+\.?\d*)\s+(M|G|K)bits/sec')
+
+    def get_iperf_rate(path):
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, 'r') as f:
+                content = f.read()
+        except Exception:
+            return None
+        for line in reversed(content.splitlines()):
+            m = _rate_pat.search(line)
+            if m:
+                val = float(m.group(1))
+                unit = m.group(2)
+                if unit == 'G':
+                    val *= 1000
+                elif unit == 'K':
+                    val /= 1000
+                return val
+        return None
+
+    for attempt in range(1, max_restarts + 1):
+        print(f"\n--- iperf3 attempt {attempt}/{max_restarts} ---")
+
+        # Kill any running iperf3 and remove stale logs
+        subprocess.run("pkill iperf3", shell=True, capture_output=True)
+        sleep(0.5)
+        try:
+            if os.path.exists("/tmp/iperf3_DL.log"):
+                os.remove("/tmp/iperf3_DL.log")
+        except Exception:
+            pass
+
+        # (Re)start UE iperf3 server then host DL client
+        UE.restart_termux_iperf3()
+        sleep(1)
+
+        bashCMDbckGrnd(iperfStartDL)
+
+        iperf_timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")
+        start = time.time()
+        rates_confirmed = False
+        timed_out = True
+
+        while time.time() - start < timeout_per_attempt:
+            sleep(1)
+            elapsed = int(time.time() - start)
+
+            iDL = get_iperf_rate("/tmp/iperf3_DL.log")
+            gDL, gUL = read_gnb_metrics()
+
+            iDL_s = f"{iDL:.1f}M" if iDL is not None else '--'
+            gDL_s = f"{gDL:.1f}M" if gDL is not None else '--'
+            gUL_s = f"{gUL:.1f}M" if gUL is not None else '--'
+            print(f"  [{elapsed:>3}s] iperf DL={iDL_s} | gNB DL={gDL_s} UL={gUL_s}")
+
+            if elapsed < settle_secs:
+                continue
+
+            # After settle window, require DL > 1 Mbps
+            dl_ok = gDL is not None and gDL >= GNB_DL_MIN_MBPS
+
+            if dl_ok:
+                print(f"  -> gNB rates confirmed (DL={gDL_s}, UL={gUL_s}). Proceeding.")
+                rates_confirmed = True
+                timed_out = False
+                break
+            else:
+                print(f"  -> Insufficient DL rate ({gDL_s} < {GNB_DL_MIN_MBPS}Mbps), restarting iperf3...")
+                timed_out = False
+                break
+
+        if timed_out:
+            print(f"  -> Timeout ({timeout_per_attempt}s) waiting for gNB metrics on attempt {attempt}.")
+
+        if rates_confirmed:
+            return iperf_timestamp
+
+    print(f"ERROR: Could not confirm iperf3 rates via gNB after {max_restarts} attempts.")
+    return None
+
+
+def restart_core():
+    """
+    Restart the AMF, SMF, and UPF so every gNB run starts with a completely
+    clean core — no stale UE contexts, no leftover PDU sessions.
+    The AMF holds in-memory UE registrations across gNB restarts; without this
+    it floods the new gNB connection with phantom RNTIs from previous runs.
+    """
+    print("Restarting 5GC (AMF / SMF / UPF) to clear stale UE state...")
+    for svc in ("open5gs-amfd", "open5gs-smfd", "open5gs-upfd"):
+        result = subprocess.run(
+            ["sudo", "systemctl", "restart", svc],
+            capture_output=True, text=True
+        )
+        status = "OK" if result.returncode == 0 else f"FAILED ({result.stderr.strip()})"
+        print(f"  {svc}: {status}")
+    sleep(3)   # give services time to finish initialising before gNB connects
+
+
+def runLoop1(UE, radarValues, gnbConfig, logDIR, direction="dl"):
+    print(f"Running Loop 1  [iperf direction: {direction.upper()}]")
+    # Stop any stale gNB first so systemctl start doesn't become a no-op.
+    bashCMD(gnbStop)
+    sleep(1)
+    gnb_start_T = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")
     try:
         print(f"Starting gNB...")
         bashCMD(gnbStart)
@@ -397,21 +724,22 @@ def runLoop1(UE, radarValues, gnbConfig, logDIR):
     if not wait_for_ping('10.45.0.2', wait_time=30):
         print("UE unable to attach to network in 15s. Exiting...")
         return False
-    print("UE attached to network. Starting iperf3 on UE...")
-    UE.restart_termux_iperf3()
-    sleep(1)
-    print("Starting iperf3 UL and DL clients...")
-    try:
-        bashCMDbckGrnd(iperfStartDL)
-        sleep(0.5)
-        bashCMDbckGrnd(iperfStartUL)
+    print("UE attached to network. Starting iperf3 and verifying rates via gNB...")
 
-    except RuntimeError as e:
-        print(f"Failed to start iperf3: {e}")
+    def _cleanup_and_fail(reason):
+        print(f"SCRAPPING RUN: {reason}")
+        bashCMD(iperfStop)
+        sleep(1)
+        UE.enable_airplane_mode()
+        sleep(2)
+        bashCMD(gnbStop)
         return False
-    iperf_timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")
-    print("Waiting 5s for iperf3 UL/DL to stabilize...")
-    sleep(5)
+
+    iperf_timestamp = start_iperf_with_gnb_verify(UE)
+    if iperf_timestamp is None:
+        return _cleanup_and_fail("Could not confirm iperf3 rates via gNB after all restarts")
+
+    print("  gNB rate gate passed — proceeding with radar.")
     # Random 0-1s jitter before radar pulse to decorrelate timing
     radar_jitter = random.uniform(0, 1)
     print(f"Radar start jitter: {radar_jitter:.3f}s")
@@ -424,8 +752,11 @@ def runLoop1(UE, radarValues, gnbConfig, logDIR):
         --total-duration {radarValues['T']} \
         --bw {radarValues['bw']} \
         --sample-rate {radarValues['sampRate']}'''
+    radar_start_T = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")
+    radar_end_T = None
     try:
         radar_output = radarStart(radarExeString)
+        radar_end_T = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")
         # Validate radar TX using async metadata and buffer health
         radar_result = validate_radar_output(radar_output)
         print(f"\n=== Radar TX Validation ===")
@@ -445,7 +776,7 @@ def runLoop1(UE, radarValues, gnbConfig, logDIR):
             f.write(radar_output)
     except RuntimeError as e:
         print(f"Radar command failed: {e}")
-        reset_usrp_usb() #handle USB disconnect specifically here
+        # reset_usrp_usb()  # usbreset is logical-only, not a power cycle — disabled until uhubctl support added
         return False
     sleep(5)
     print("radar stopped...")
@@ -458,9 +789,50 @@ def runLoop1(UE, radarValues, gnbConfig, logDIR):
     bashCMD(gnbStop)
     print("Collecting logs...")
     log_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    ProcessGnbLogs(radarValues, iperf_timestamp, logDIR, log_timestamp)
+    ProcessGnbLogs(radarValues, iperf_timestamp, logDIR, log_timestamp,
+                   radar_start_T=radar_start_T, radar_end_T=radar_end_T,
+                   gnb_start_T=gnb_start_T)
     sleep(1)
     return True
+
+class _SessionLogger:
+    """
+    Tee a stream to two destinations:
+      - session.log  : persistent for the whole experiment session, timestamped,
+                       line-buffered so `tail -f` works in real time.
+      - /tmp/terminal.log : reset at the start of each run, archived per run
+                            by ProcessGnbLogs.
+    Pass `session_file` as an already-open file object to share one session log
+    between stdout and stderr.
+    """
+    def __init__(self, stream, session_file):
+        self._stream   = stream
+        self._session  = session_file          # shared across stdout + stderr
+        self._run_log  = open('/tmp/terminal.log', 'a', buffering=1)
+        self._buf      = ''
+
+    def reset_run_log(self):
+        """Call at the start of each run to start a fresh per-run capture."""
+        self._run_log.close()
+        self._run_log = open('/tmp/terminal.log', 'w', buffering=1)
+
+    def write(self, data):
+        self._stream.write(data)
+        self._buf += data
+        while '\n' in self._buf:
+            line, self._buf = self._buf.split('\n', 1)
+            ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self._session.write(f'[{ts}] {line}\n')
+            self._run_log.write(f'{line}\n')
+
+    def flush(self):
+        self._stream.flush()
+        self._session.flush()
+        self._run_log.flush()
+
+    def __getattr__(self, attr):
+        return getattr(self._stream, attr)
+
 
 def set_log_dir(base_experiment_dir, run_number):
     """
@@ -514,10 +886,12 @@ def main():
     parser = argparse.ArgumentParser(description='OTA Experiment Control Script')
     parser.add_argument('-f', '--folder', type=str, required=True,
                         help='Folder name (relative to ~/OTA-Experiment-Runs) or absolute path')
-    parser.add_argument('-n', '--n-repeats', type=int, default=1000,
-                        help='Number of repeats per configuration (default: 1000)')
+    parser.add_argument('-n', '--n-repeats', type=int, default=100,
+                        help='Number of repeats (default: 100)')
     parser.add_argument('--harq-analysis', action='store_true', default=False,
                         help='Run batch HARQ analysis on saved gNB logs after all runs complete')
+    parser.add_argument('--direction', choices=['ul', 'dl', 'both'], default='dl',
+                        help='iperf3 traffic direction: dl (default), ul, or both')
     args = parser.parse_args()
 
     # Setup experiment directory — absolute path used directly, relative joined with base
@@ -528,94 +902,117 @@ def main():
         os.makedirs(base_dir, exist_ok=True)
         experiment_dir = os.path.join(base_dir, args.folder)
 
+    # Each script launch gets its own session subfolder so restarts never
+    # collide with a previous session's run dirs.
+    session_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    experiment_dir = os.path.join(experiment_dir, session_ts)
     os.makedirs(experiment_dir, exist_ok=True)
+
+    # Session logger: persistent timestamped log shared by stdout + stderr.
+    # Stdout also resets /tmp/terminal.log per run for per-run archiving.
+    import sys
+    session_log_path = os.path.join(experiment_dir, 'session.log')
+    _session_file    = open(session_log_path, 'a', buffering=1)
+    _stdout_logger   = _SessionLogger(sys.__stdout__, _session_file)
+    sys.stdout       = _stdout_logger
+    sys.stderr       = _SessionLogger(sys.__stderr__, _session_file)
+
     print(f"Experiment directory: {experiment_dir}")
-    
+    print(f"Session log:          {session_log_path}")
+    print(f"Live monitor:         tail -f {session_log_path}")
+
+    # reset_usb_devices()  # usbreset is logical-only, not a power cycle — disabled until uhubctl support added
+
     cfg = readGnbConfig(gnbConfigRadar)
     UE = AndroidController()
     stop_requested = False
 
-    # ==================== MCS SWEEP CONFIGURATION ====================
-    # MCS sweep from 27 to 0 (decrementally)
-    # Both min_ue_mcs and max_ue_mcs will be set to the same value
-    # Radar parameters remain FIXED
-    mcs_values = [27]  # Only MCS 27
-    # gain_values = list(range(20, 51, 2))  # Radar gain from 20 to 50 (step 2)
-    # cFreq_values = [round(3417.1e6 + i * 0.2e6, 1) for i in range(int((3423 - 3417.1) / 0.2) + 1)]  # Center freq from 3417.1 to 3423 MHz (step 0.2 MHz)
-    n_repeats = args.n_repeats
-    total_runs = len(mcs_values) * n_repeats
+    # ==================== PDSCH MCS SWEEP (DL) ====================
+    # Sweep PDSCH MCS 27 → 0, radar params fixed, 100 repeats per MCS level
+    mcs_values    = list(range(27, -1, -1))   # [27, 26, ..., 0]
+    n_repeats     = args.n_repeats            # default 100
+    total_runs    = len(mcs_values) * n_repeats
     iteration_count = 0
     run_durations = []
-    
-    print(f"\nMCS, Radar Gain, and Center Frequency Sweep Configuration:")
-    print(f"  MCS values: {mcs_values}")
-    # print(f"  Radar Gain values: {gain_values[0]} to {gain_values[-1]} dB (step: 2)")
-    # print(f"  Center Frequency values: {cFreq_values[0]/1e6:.1f} to {cFreq_values[-1]/1e6:.1f} MHz (step: 0.2 MHz)")
-    print(f"  Repeats per configuration: {n_repeats}")
-    print(f"  Total runs: {total_runs}")
-    print(f"  Radar settings (FIXED):")
-    print(f"    PRF: {radarData['prf']} Hz")
-    print(f"    PW: {radarData['PW']*1e6:.2f} µs")
-    print(f"    T: {radarData['T']} seconds")
+
+    print(f"\nPDSCH MCS Sweep Configuration (DL):")
+    print(f"  MCS sweep:  {mcs_values[0]} → {mcs_values[-1]}")
+    print(f"  Repeats per MCS: {n_repeats}")
+    print(f"  Total runs: {total_runs}  ({len(mcs_values)} MCS × {n_repeats} repeats)")
+    print(f"  PRF:   {radarData['prf']} Hz  |  PW: {radarData['PW']*1e6:.0f} µs  |  Gain: {radarData['gain']} dB")
 
     try:
-        for repeat in range(n_repeats):
-            # Create run-specific directory for this repeat
-            run_log_dir = set_log_dir(experiment_dir, repeat + 1)
-            print(f"\n{'='*70}")
-            print(f"Starting Repeat {repeat + 1}/{n_repeats}")
-            print(f"Saving to: {run_log_dir}")
-            print(f"{'='*70}\n")
-            mcs = mcs_values[0]  # Only one MCS value in this configuration
-            gain = radarData['gain']  # Fixed gain
-            cFreq = radarData['cFreq']  # Fixed center frequency
-            # for gain in gain_values:
-            #     radarData['gain'] = gain
-            #     for cFreq in cFreq_values:
-            #         radarData['cFreq'] = cFreq
-            #         for mcs in mcs_values:
-            #             iteration_count += 1
-                
-                # # Update both min_ue_mcs and max_ue_mcs to the same value in the gNB config file
-                # # print(f"\nUpdating min_ue_mcs and max_ue_mcs to {mcs}...")
-                # # update_yaml_parameter(gnbConfigRadar, "cell_cfg.pdsch.min_ue_mcs", mcs)
-                # # update_yaml_parameter(gnbConfigRadar, "cell_cfg.pdsch.max_ue_mcs", mcs)
+        for mcs in mcs_values:
+            # Only pin PDSCH — this is a DL-only test
+            update_yaml_parameter(gnbConfigRadar, "cell_cfg.pdsch.min_ue_mcs", mcs)
+            update_yaml_parameter(gnbConfigRadar, "cell_cfg.pdsch.max_ue_mcs", mcs)
+            print(f"\n{'#'*70}")
+            print(f"PDSCH MCS = {mcs}  ({n_repeats} repeats)")
+            print(f"{'#'*70}")
 
-                    # Estimate time
-            if run_durations:
-                avg_duration = sum(run_durations) / len(run_durations)
-                runs_left = total_runs - iteration_count + 1
-                est_remaining = avg_duration * runs_left
-                est_end_time = datetime.now() + timedelta(seconds=est_remaining)
-                hours = int(est_remaining // 3600)
-                minutes = int((est_remaining % 3600) // 60)
-                seconds = int(est_remaining % 60)
-                print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | MCS: {mcs} | Gain: {gain} dB | CFreq: {cFreq/1e6:.1f} MHz")
-                if hours > 0:
-                    print(f"Estimated time left: {hours} hr {minutes} min {seconds} sec")
+            for repeat in range(n_repeats):
+                iteration_count += 1
+                run_log_dir = set_log_dir(experiment_dir, iteration_count)
+                print(f"\n{'='*70}")
+                print(f"Run {iteration_count}/{total_runs}  |  MCS {mcs}  |  Repeat {repeat + 1}/{n_repeats}")
+                print(f"Saving to: {run_log_dir}")
+                print(f"{'='*70}\n")
+
+                if run_durations:
+                    avg_duration  = sum(run_durations) / len(run_durations)
+                    est_remaining = avg_duration * (total_runs - iteration_count + 1)
+                    est_end_time  = datetime.now() + timedelta(seconds=est_remaining)
+                    hours   = int(est_remaining // 3600)
+                    minutes = int((est_remaining % 3600) // 60)
+                    seconds = int(est_remaining % 60)
+                    if hours > 0:
+                        print(f"Est. remaining: {hours}h {minutes}m {seconds}s  (done ~{est_end_time.strftime('%Y-%m-%d %H:%M')})")
+                    else:
+                        print(f"Est. remaining: {minutes}m {seconds}s  (done ~{est_end_time.strftime('%H:%M')})")
                 else:
-                    print(f"Estimated time left: {minutes} min {seconds} sec")
-                print(f"Estimated end time: {est_end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-            else:
-                print(f"\nIteration {iteration_count}/{total_runs} | Repeat {repeat + 1}/{n_repeats} | MCS: {mcs} | Gain: {gain} dB | CFreq: {cFreq/1e6:.1f} MHz")
-                print("Estimating time after first run...")
+                    print("Estimating time after first run...")
 
-            # Print current settings
-            print(f"Current config: MCS={mcs}, PRF={radarData['prf']}, Gain={radarData['gain']}, CFreq={radarData['cFreq']/1e6:.1f} MHz, PW={radarData['PW']*1e6:.2f}µs")
+                # Reset per-run log so only this run's output is archived
+                _stdout_logger.reset_run_log()
 
-            # Start the run and time it
-            start_time = time.time()
-            runLoop1(UE, radarData, cfg, run_log_dir)
-            duration = time.time() - start_time
-            run_durations.append(duration)
+                start_time = time.time()
+                runLoop1(UE, radarData, cfg, run_log_dir, direction="dl")
+                run_durations.append(time.time() - start_time)
 
-            if stop_requested:
-                print("Keyboard interrupt received. Exiting after current runLoop1.")
-                return
+                # Run HARQ analysis on this run's folder immediately after
+                try:
+                    result = subprocess.run(
+                        ["python3", "/home/eric/OTA-Radar-5G-Trials/analyze_harq.py",
+                         "--batch", run_log_dir],
+                        capture_output=True, text=True
+                    )
+                    if result.returncode == 0:
+                        print(f"HARQ analysis complete for run {iteration_count}")
+                    else:
+                        print(f"HARQ analysis warning (code {result.returncode}): {result.stderr[:200]}")
+                except Exception as e:
+                    print(f"HARQ analysis failed: {e}")
+
+                # Sync this run's folder to NAS:/OTA/<experiment_name>/
+                nas_dest = f"nas:~/OTA/{args.folder}/{os.path.relpath(run_log_dir, os.path.dirname(experiment_dir))}/"
+                try:
+                    rsync_result = subprocess.run(
+                        ["rsync", "-a", "--mkpath", f"{run_log_dir}/", nas_dest],
+                        capture_output=True, text=True
+                    )
+                    if rsync_result.returncode == 0:
+                        print(f"Synced run {iteration_count} → {nas_dest}")
+                    else:
+                        print(f"NAS sync warning: {rsync_result.stderr[:200]}")
+                except Exception as e:
+                    print(f"NAS sync failed: {e}")
+
+                if stop_requested:
+                    print("Keyboard interrupt received. Exiting after current run.")
+                    return
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Will exit after the current runLoop1 finishes.")
         stop_requested = True
-        # The loop will check stop_requested after the current runLoop1 and exit.
 
     # Run batch HARQ analysis on all saved logs
     if args.harq_analysis:

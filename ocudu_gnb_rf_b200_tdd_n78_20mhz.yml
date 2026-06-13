@@ -1,0 +1,106 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+
+# This example configuration outlines how to configure the OCUDU gNB to create a single TDD cell
+# transmitting in band 78, with 20 MHz bandwidth and 30 kHz sub-carrier-spacing. A USRP B200 is configured
+# as the RF frontend using split 8. Note in this example an external clock source is not used, so the sync
+# is not defined and the default is used.
+gnb_id: 411
+gnb_id_bit_length: 32
+cu_cp:
+  amf:
+    addrs: 127.0.0.5
+    port: 38412
+    bind_addrs: 127.0.0.5
+    supported_tracking_areas:
+      - tac: 1
+        plmn_list:
+          - plmn: "00101"
+            tai_slice_support_list:
+              - sst: 1
+  mobility:
+    trigger_handover_from_measurements: true                    # Set the CU-CP to trigger handover when neighbor cell measurements arrive
+    cells:                                                      # List of cells available for handover known to the cu-cp
+      - nr_cell_id: 0x19B0                                        # Cell ID for cell 1
+        periodic_report_cfg_id: 1                                 # Set the periodic report configuration ID for this cell
+        ncells:                                                   # Neighbor cell(s) available for handover
+          - nr_cell_id: 0x19B1                                      # Cell ID of neighbor cell available for handover
+            report_configs: [ 2 ]                                   # Report configurations to configure for this neighbor cell
+      - nr_cell_id: 0x19B1                                        # Cell ID for cell 2
+        periodic_report_cfg_id: 1                                 # Set the periodic report configuration ID for this cell
+        ncells:                                                   # Neighbor cell(s) available for handover
+          - nr_cell_id: 0x19B0                                      # Cell ID of neighbor cell available for handover
+            report_configs: [ 2 ]                                   # Report configurations to configure for this neighbor cell
+    report_configs:                                             # Sets the report configuration for triggering handover
+      - report_cfg_id: 1                                          # Report config ID 1
+        report_type: periodical                                   # Sets the report type as periodical
+        report_interval_ms: 120                                  # Optional UINT (1024). The report interval in ms. Supported: [120, 240, 480, 640, 1024, 2048, 5120, 10240, 20480, 40960, 60000, 360000, 720000, 1800000]. 
+      - report_cfg_id: 2                                          # Report config ID 2
+        report_type: event_triggered                              # Sets the report type as event triggered
+        event_triggered_report_type: a3                           # Sets the event triggered report type as A3
+        meas_trigger_quantity: rsrp                               # Sets the measurement trigger quantity as rsrp
+        meas_trigger_quantity_offset_db: 3                        # Sets the measurement trigger quantity offset to 3dB
+        hysteresis_db: 0                                          # Sets the hysteresis to 0dB
+        time_to_trigger_ms: 100 
+ru_sdr:
+  device_driver: uhd
+  device_args: type=b200,serial=31577EF,num_recv_frames=64,num_send_frames=64
+  srate: 23.04
+  otw_format: sc12
+  tx_gain: 85
+  rx_gain: 50
+  clock: external
+
+cell_cfg:
+  dl_arfcn: 627340 #B78 3410.1MHz (3400.1-3420.1)
+  band: 78
+  channel_bandwidth_MHz: 20
+  common_scs: 30
+  plmn: "00101"
+  tac: 1
+  pci: 1
+
+  tdd_ul_dl_cfg:
+    dl_ul_tx_period: 10                     # Optional INT (10). Sets the TDD pattern periodicity in slots. The combination of this value and the chosen numerology must lead to a TDD periodicity of 0.5, 0.625, 1, 1.25, 2, 2.5, 3, 4, 5 or 10 milliseconds. Supported: [2 - 80].
+    nof_dl_slots: 7                         # Optional INT (6). Number of consecutive full Downlink slots. Supported: [0-80].
+    nof_dl_symbols: 8                       # Optional INT (8). Number of Downlink symbols at the beginning of the slot following full Downlink slots. Supported: [0-13].
+    nof_ul_slots: 2                         # Optional INT (3). Number of consecutive full Uplink slots. Supported: [0 - 80].
+    nof_ul_symbols: 2 
+
+  pucch:
+    p0_nominal: -74
+  pusch:
+    min_ue_mcs: 0  # Optional UINT (0). Sets a minimum PUSCH MCS value to be used for all UEs. Supported: [0 - 28].
+    max_ue_mcs: 27
+    max_nof_harq_retxs: 0
+
+  pdsch:
+    min_ue_mcs: 27  # Optional UINT (0). Sets a minimum PDSCH MCS value to be used for all UEs. Supported: [0 - 28].
+    max_ue_mcs: 27  # Optional UINT (28). Sets a maximum PDSCH MCS value to be used for all UEs. Supported: [0 - 28].
+    nof_harqs: 16                           # Optional UNIT (16). Sets the number of Downlink HARQ processes. Supported [2, 4, 6, 8, 10, 12, 16].
+    max_nof_harq_retxs: 0                   # Optional UINT (4). Sets the maximum number times a DL HARQ can be retransmitted before it is discarded. Supported: [0 - 4].
+    mcs_table: qam256                        # Optional TEXT (qam64). Sets the MCS table to use for PDSCH. Supported: [qam64, qam256].
+    # min_rb_size: 1                          # Optional UINT (1). Sets the minimum RB size for the UE PDSCH resource allocation. Supported: [1 - 275].
+    # max_rb_size: 51
+log:
+  filename: /tmp/gnb.log
+  all_level: warning
+  config_level: info 
+  rrc_level: debug
+  ngap_level: debug
+  mac_level: debug
+  phy_level: debug
+
+pcap:
+  mac_enable: false
+  mac_filename: /tmp/gnb_mac.pcap
+  ngap_enable: false
+  ngap_filename: /tmp/gnb_ngap.pcap
+
+metrics:
+  autostart_stdout_metrics: true  
+  enable_log: true  
+  # enable_json: true    
+  # addr: 127.0.0.1        # Metrics-server IP
+  # port: 55555             # Metrics-server Port
